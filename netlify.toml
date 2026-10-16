@@ -1,6 +1,13 @@
 [build]
   command   = "bun install && bunx vite build"
   publish   = "dist"
+  ignore    = ""
+
+[build.processing]
+  skip_processing = false
+
+[context.production]
+  environment = { GIT_SUBMODULE_STRATEGY = "none" }
 
 [build.environment]
   NODE_VERSION = "20"
