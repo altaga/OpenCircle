@@ -7,8 +7,6 @@ import { Send, AlertCircle, CheckCircle2, Loader2, ExternalLink } from 'lucide-r
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Hex } from 'viem'
 import type { TxState } from '@/hooks/useCircleWallet'
-import { buildTxExplorerUrl } from '@/onchain-facts'
-import { arcTestnet } from 'viem/chains'
 
 interface Props {
   balance: string
@@ -19,7 +17,12 @@ interface Props {
   onSend: (to: Hex, amount: string) => void
 }
 
-const CHAIN_ID = arcTestnet.id
+/** Arc Testnet block explorer */
+function buildTxExplorerUrl(txHash: string): string {
+  const hash = /^0x[0-9a-fA-F]{64}$/.test(txHash) ? txHash : ''
+  if (!hash) return '#'
+  return `https://explorer.arc.io/tx/${hash}`
+}
 
 const glass = {
   card: {
@@ -44,7 +47,7 @@ export function SendPanel({ balance, rawBalance: _rawBalance, txState, txHash, t
   const amountValid  = !isNaN(amountNum) && amountNum > 0
   const canSend      = addressValid && amountValid && txState === 'idle'
 
-  const explorerUrl  = txHash ? buildTxExplorerUrl(CHAIN_ID, txHash) : null
+  const explorerUrl  = txHash ? buildTxExplorerUrl(txHash) : null
 
   const handleSend = () => { if (canSend) onSend(to as Hex, amount) }
 
@@ -136,7 +139,7 @@ export function SendPanel({ balance, rawBalance: _rawBalance, txState, txHash, t
           </button>
           {isBusy && (
             <p className="mt-2 text-center text-xs" style={{ color:'#8a849c' }}>
-              Gas is sponsored — no native token needed
+              Gas is paid from your USDC balance
             </p>
           )}
         </div>

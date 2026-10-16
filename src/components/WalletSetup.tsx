@@ -182,7 +182,7 @@ export function WalletSetup({ state, error, onRegister, onLogin }: Props) {
         </div>
 
         <p className="mt-6 text-center text-xs" style={{ color:'#8a849c' }}>
-          Open source · 100% Circle · Arc Testnet
+          Open source · 100% Circle · Arc Mainnet
         </p>
       </motion.div>
     </div>

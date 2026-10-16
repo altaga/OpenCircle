@@ -27,9 +27,22 @@ import { createPublicClient, type Hex } from 'viem'
 import { createBundlerClient, toWebAuthnAccount } from 'viem/account-abstraction'
 import { arcTestnet } from 'viem/chains'
 import { arc } from 'viem/chains'
-import { parseUsdc, formatUsdc } from '@/onchain-money'
-import { requireChain } from '@/onchain-facts'
 import type { NetworkConfig } from '@/context/NetworkContext'
+
+/** Parse a USDC display string (e.g. "12.50") to raw bigint (6 decimals). */
+function parseUsdc(amount: string): bigint {
+  const [int = '0', dec = ''] = amount.split('.')
+  const padded = dec.slice(0, 6).padEnd(6, '0')
+  return BigInt(int) * 1_000_000n + BigInt(padded)
+}
+
+/** Format raw USDC bigint to display string. */
+function formatUsdc(raw: bigint): string {
+  const s = raw.toString().padStart(7, '0')
+  const int = s.slice(0, -6) || '0'
+  const dec = s.slice(-6).replace(/0+$/, '')
+  return dec ? `${int}.${dec}` : int
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type WalletState = 'idle' | 'registering' | 'logging_in' | 'ready' | 'error'
@@ -239,11 +252,8 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
     try {
       const pubClient     = makePublicClient()
       const bundler       = makeBundlerClient()
-      const usdcAddress   = netConfig.usdcContractAddress as Hex
-
-      // Verify the chain has a known USDC contract
-      const usdcFact = requireChain(netConfig.chainId).usdc
-      if (!usdcFact) throw new Error('No USDC contract known for this chain')
+      const usdcAddress = netConfig.usdcContractAddress as Hex
+      if (!usdcAddress || usdcAddress === '0x') throw new Error('No USDC contract known for this chain')
 
       const account  = await toCircleSmartAccount({
         client: pubClient,
@@ -253,10 +263,11 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       const callData = encodeTransfer(to, usdcAddress, amount)
 
       setTxState('confirming')
+      // Gas is paid by the user in USDC (Arc native token).
+      // Set paymaster: true here to sponsor gas via Circle Gas Station instead.
       const userOpHash = await bundler.sendUserOperation({
         account,
         calls: [callData],
-        paymaster: true,
       })
       const { receipt } = await bundler.waitForUserOperationReceipt({ hash: userOpHash })
       const hash = receipt.transactionHash

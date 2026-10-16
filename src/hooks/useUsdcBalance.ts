@@ -8,10 +8,16 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPublicClient, erc20Abi } from 'viem'
 import { arcTestnet, arc } from 'viem/chains'
 import { toModularTransport } from '@circle-fin/modular-wallets-core'
-import { getUsdc } from '@/onchain-facts'
-import { formatUsdc } from '@/onchain-money'
 import type { Hex } from 'viem'
 import type { NetworkConfig } from '@/context/NetworkContext'
+
+/** Format a USDC raw bigint (6 decimals) to a display string like "12.34" */
+function formatUsdc(raw: bigint): string {
+  const s = raw.toString().padStart(7, '0')
+  const int = s.slice(0, -6) || '0'
+  const dec = s.slice(-6).replace(/0+$/, '')
+  return dec ? `${int}.${dec}` : int
+}
 
 const CLIENT_URL = import.meta.env.VITE_CLIENT_URL as string
 
@@ -29,17 +35,17 @@ export function useUsdcBalance(address: Hex | null, netConfig: NetworkConfig, po
   const refresh = useCallback(async () => {
     const addr = addressRef.current
     const cfg  = netConfigRef.current
-    const usdcInfo = getUsdc(cfg.chainId)
-    if (!addr || addr === '0x' || !usdcInfo) return
+    if (!addr || addr === '0x') return
 
-    const viemChain = cfg.network === 'mainnet' ? arc : arcTestnet
-    const transport = toModularTransport(`${CLIENT_URL}${cfg.chainPath}`, cfg.clientKey)
-    const client    = createPublicClient({ chain: viemChain, transport })
+    const usdcAddress = cfg.usdcContractAddress as Hex
+    const viemChain   = cfg.network === 'mainnet' ? arc : arcTestnet
+    const transport   = toModularTransport(`${CLIENT_URL}${cfg.chainPath}`, cfg.clientKey)
+    const client      = createPublicClient({ chain: viemChain, transport })
 
     setLoading(true)
     try {
       const balance = await client.readContract({
-        address: usdcInfo.address as Hex,
+        address: usdcAddress,
         abi: erc20Abi,
         functionName: 'balanceOf',
         args: [addr],
