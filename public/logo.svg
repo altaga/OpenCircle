@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" fill="none">
+  <defs>
+    <linearGradient id="g1" x1="26" y1="26" x2="94" y2="94" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#85B1ED"/>
+      <stop offset="55%"  stop-color="#AF8FF4"/>
+      <stop offset="100%" stop-color="#FFCD83"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ── Icon mark: rounded square ── -->
+  <rect x="0" y="0" width="120" height="120" rx="28" fill="#122d45"/>
+
+  <!--
+    Open-C arc: center (60,60), radius 34.
+    Start at 315° (top-right), sweep 270° clockwise, end at 225° (bottom-right).
+    In SVG coords (y down):
+      315° → x = 60 + 34·cos(315°) = 60 + 24.04 = 84.04,  y = 60 - 34·sin(315°) = 60 + 24.04 = 84.04  ← wrong
+    Let's use standard math angles:
+      Start 225° (bottom-left), end 135° (top-left), sweep 270° CW = large-arc=1, sweep=1
+      But the opening should face right, like a C.
+      Opening faces right means gap is on the right side.
+      Start: 315° = top-right  → (60+34cos45, 60-34sin45) = (84.04, 35.96)
+      End:   45°  = bottom-right → (84.04, 84.04)
+      Sweep: 270° clockwise (large arc, sweep-flag=1)
+  -->
+  <path
+    d="M 84.04 35.96
+       A 34 34 0 1 0 84.04 84.04"
+    stroke="url(#g1)"
+    stroke-width="10"
+    stroke-linecap="round"
+    fill="none"
+  />
+
+  <!-- Center coin dot -->
+  <circle cx="60" cy="60" r="7" fill="url(#g1)"/>
+
+  <!-- ── Wordmark ── -->
+  <!-- "Open" in medium weight -->
+  <text
+    x="144" y="50"
+    font-family="'Space Grotesk', 'DM Sans', system-ui, sans-serif"
+    font-size="34"
+    font-weight="500"
+    letter-spacing="-1"
+    fill="#122d45"
+  >Open</text>
+  <!-- "Circle" in bold, same baseline offset -->
+  <text
+    x="144" y="50"
+    font-family="'Space Grotesk', 'DM Sans', system-ui, sans-serif"
+    font-size="34"
+    font-weight="700"
+    letter-spacing="-1"
+    fill="#122d45"
+    dx="94"
+  >Circle</text>
+
+  <!-- Tagline -->
+  <text
+    x="145" y="76"
+    font-family="'DM Sans', system-ui, sans-serif"
+    font-size="13"
+    font-weight="400"
+    letter-spacing="0.8"
+    fill="#8a849c"
+  >USDC WALLET</text>
+</svg>
