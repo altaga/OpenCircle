@@ -6,10 +6,11 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPublicClient, erc20Abi } from 'viem'
-import { arcTestnet, arc } from 'viem/chains'
+import { arc } from 'viem/chains'
 import { toModularTransport } from '@circle-fin/modular-wallets-core'
 import type { Hex } from 'viem'
 import type { NetworkConfig } from '@/context/NetworkContext'
+import { CIRCLE_RPC_URL } from '@/lib/circle-config'
 
 /** Format a USDC raw bigint (6 decimals) to a display string like "12.34" */
 function formatUsdc(raw: bigint): string {
@@ -18,8 +19,6 @@ function formatUsdc(raw: bigint): string {
   const dec = s.slice(-6).replace(/0+$/, '')
   return dec ? `${int}.${dec}` : int
 }
-
-const CLIENT_URL = import.meta.env.VITE_CLIENT_URL as string
 
 export function useUsdcBalance(address: Hex | null, netConfig: NetworkConfig, pollMs = 15_000) {
   const [raw, setRaw]         = useState<bigint | null>(null)
@@ -38,9 +37,8 @@ export function useUsdcBalance(address: Hex | null, netConfig: NetworkConfig, po
     if (!addr || addr === '0x') return
 
     const usdcAddress = cfg.usdcContractAddress as Hex
-    const viemChain   = cfg.network === 'mainnet' ? arc : arcTestnet
-    const transport   = toModularTransport(`${CLIENT_URL}${cfg.chainPath}`, cfg.clientKey)
-    const client      = createPublicClient({ chain: viemChain, transport })
+    const transport   = toModularTransport(`${CIRCLE_RPC_URL}${cfg.chainPath}`, cfg.clientKey)
+    const client      = createPublicClient({ chain: arc, transport })
 
     setLoading(true)
     try {

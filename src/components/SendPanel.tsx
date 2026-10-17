@@ -7,6 +7,7 @@ import { Send, AlertCircle, CheckCircle2, Loader2, ExternalLink } from 'lucide-r
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Hex } from 'viem'
 import type { TxState } from '@/hooks/useCircleWallet'
+import { ARC_MAINNET } from '@/lib/circle-config'
 
 interface Props {
   balance: string
@@ -21,7 +22,7 @@ interface Props {
 function buildTxExplorerUrl(txHash: string): string {
   const hash = /^0x[0-9a-fA-F]{64}$/.test(txHash) ? txHash : ''
   if (!hash) return '#'
-  return `https://explorer.arc.io/tx/${hash}`
+  return `${ARC_MAINNET.explorer}/tx/${hash}`
 }
 
 const glass = {

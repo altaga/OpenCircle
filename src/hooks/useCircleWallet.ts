@@ -25,9 +25,9 @@ import {
 import { type P256Credential } from 'viem/account-abstraction'
 import { createPublicClient, type Hex } from 'viem'
 import { createBundlerClient, toWebAuthnAccount } from 'viem/account-abstraction'
-import { arcTestnet } from 'viem/chains'
 import { arc } from 'viem/chains'
 import type { NetworkConfig } from '@/context/NetworkContext'
+import { CIRCLE_RPC_URL } from '@/lib/circle-config'
 import { logSafeError, runProbe } from '@/lib/credential-diagnostics'
 
 /** Parse a USDC display string (e.g. "12.50") to raw bigint (6 decimals). */
@@ -103,13 +103,10 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
   const [txError, setTxError]       = useState<string | null>(null)
   const sendingRef                  = useRef(false)
 
-  const CLIENT_URL = import.meta.env.VITE_CLIENT_URL as string
+  const CLIENT_URL = CIRCLE_RPC_URL
 
-  // Build viem chain object from chainId
-  const viemChain = useMemo(
-    () => (netConfig.network === 'mainnet' ? arc : arcTestnet),
-    [netConfig.network],
-  )
+  // Arc Mainnet only.
+  const viemChain = useMemo(() => arc, [])
 
   // ── Transport factories (fresh per call, not module-level) ─────────────────
   const makePasskeyTransport = useCallback(

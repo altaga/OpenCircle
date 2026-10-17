@@ -3,6 +3,7 @@
  * USDC address verified onchain: 0x3600000000000000000000000000000000000000
  */
 import { createContext, useContext, type ReactNode } from 'react'
+import { ARC_MAINNET, CLIENT_KEY } from '@/lib/circle-config'
 import { exposeDiagnostics, reportCredentials } from '@/lib/credential-diagnostics'
 
 export type Network = 'mainnet'
@@ -17,10 +18,10 @@ export interface NetworkConfig {
 
 const MAINNET_CONFIG: NetworkConfig = {
   network:             'mainnet',
-  chainId:             5042,
-  chainPath:           '/arc',
-  clientKey:           (import.meta.env.VITE_CLIENT_KEY_MAINNET as string) ?? '',
-  usdcContractAddress: '0x3600000000000000000000000000000000000000',
+  chainId:             ARC_MAINNET.chainId,
+  chainPath:           ARC_MAINNET.chainPath,
+  clientKey:           CLIENT_KEY,
+  usdcContractAddress: ARC_MAINNET.usdcContractAddress,
 }
 
 interface NetworkCtx {

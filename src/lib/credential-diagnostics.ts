@@ -15,11 +15,10 @@
  * so its verdict reflects what the real transport would see.
  */
 
+import { CIRCLE_RPC_URL, CLIENT_KEY } from '@/lib/circle-config'
+
 // ── Secret registry (never exported) ──────────────────────────────────────────
-const SECRET_VALUES: string[] = [
-  import.meta.env.VITE_CLIENT_KEY_MAINNET,
-  import.meta.env.VITE_CLIENT_KEY,
-].filter((v): v is string => typeof v === 'string' && v.length > 0)
+const SECRET_VALUES: string[] = [CLIENT_KEY].filter((v) => v.length > 0)
 
 const REDACTED = '[REDACTED]'
 
@@ -57,7 +56,7 @@ export interface CredentialTarget {
 
 /** Resolved here so callers can pass the network config unchanged. */
 function clientUrl(): string {
-  return (import.meta.env.VITE_CLIENT_URL as string) ?? ''
+  return CIRCLE_RPC_URL
 }
 
 function classifyKey(key: string): KeyKind {
