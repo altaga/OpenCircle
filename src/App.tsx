@@ -15,6 +15,7 @@ import { SendPanel } from '@/components/SendPanel'
 import { ReceivePanel } from '@/components/ReceivePanel'
 import { SwapPanel } from '@/components/SwapPanel'
 import { BridgePanel } from '@/components/BridgePanel'
+import { InstallBanner } from '@/components/InstallBanner'
 import type { Hex } from 'viem'
 
 type Tab = 'send' | 'receive' | 'swap' | 'bridge'
@@ -37,6 +38,8 @@ function AppInner() {
       <WalletSetup
         state={wallet.state}
         error={wallet.txError}
+        remember={wallet.remember}
+        onRemember={wallet.setRemember}
         onRegister={(u) => void wallet.register(u)}
         onLogin={() => void wallet.login()}
       />
@@ -113,6 +116,8 @@ function AppInner() {
             {tab === 'bridge'  && <BridgePanel />}
           </motion.div>
         </AnimatePresence>
+
+        <InstallBanner className="mt-5" />
       </div>
 
       {/* Bottom tab bar */}

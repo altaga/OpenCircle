@@ -3,16 +3,53 @@
  * Arc Light consumer glass aesthetic.
  */
 import { useState } from 'react'
-import { Fingerprint, LogIn, AlertCircle, Loader2 } from 'lucide-react'
+import { Fingerprint, LogIn, AlertCircle, Loader2, Check } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { WalletState } from '@/hooks/useCircleWallet'
 import { LogoMark } from '@/components/Logo'
+import { InstallBanner } from '@/components/InstallBanner'
 
 interface Props {
   state: WalletState
   error: string | null
+  remember: boolean
+  onRemember: (on: boolean) => void
   onRegister: (username: string) => void
   onLogin: () => void
+}
+
+/**
+ * Device persistence is opt-in and spelled out plainly: it only removes the
+ * prompt needed to open the wallet. Signing a transaction always asks the
+ * authenticator, so this never hands spending power to a stored blob.
+ */
+function RememberToggle({ checked, onChange }: { checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2.5 select-none">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="sr-only"
+      />
+      <span
+        aria-hidden
+        className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-md transition-all"
+        style={{
+          background: checked ? '#122d45' : 'rgba(255,255,255,0.46)',
+          border: '1px solid rgba(255,255,255,0.56)',
+        }}
+      >
+        {checked && <Check size={11} strokeWidth={3} className="text-white" />}
+      </span>
+      <span className="text-xs leading-snug" style={{ color: '#6b6580' }}>
+        Remember me on this device
+        <span className="block" style={{ color: '#8a849c' }}>
+          Opens without a prompt. Sending always asks.
+        </span>
+      </span>
+    </label>
+  )
 }
 
 const glass = {
@@ -27,7 +64,7 @@ const glass = {
 
 const spectral = 'linear-gradient(90deg,#5fbeff,#af8ff4,#f05c6b,#ffcd83,#7ef1b3)'
 
-export function WalletSetup({ state, error, onRegister, onLogin }: Props) {
+export function WalletSetup({ state, error, remember, onRemember, onRegister, onLogin }: Props) {
   const [username, setUsername] = useState('')
   const [tab, setTab] = useState<'register' | 'login'>('register')
 
@@ -123,6 +160,7 @@ export function WalletSetup({ state, error, onRegister, onLogin }: Props) {
                       onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.56)'; e.currentTarget.style.boxShadow = 'none' }}
                     />
                   </div>
+                  <RememberToggle checked={remember} onChange={onRemember} />
                   <button
                     disabled={busy || !username.trim()}
                     onClick={() => onRegister(username.trim())}
@@ -148,6 +186,7 @@ export function WalletSetup({ state, error, onRegister, onLogin }: Props) {
                   transition={{ duration: 0.2 }}
                   className="space-y-4"
                 >
+                  <RememberToggle checked={remember} onChange={onRemember} />
                   <button
                     disabled={busy}
                     onClick={onLogin}
@@ -180,6 +219,10 @@ export function WalletSetup({ state, error, onRegister, onLogin }: Props) {
               </motion.div>
             )}
           </div>
+        </div>
+
+        <div className="mt-4">
+          <InstallBanner />
         </div>
 
         <p className="mt-6 text-center text-xs" style={{ color:'#8a849c' }}>

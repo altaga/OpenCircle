@@ -30,6 +30,13 @@ import type { NetworkConfig } from '@/context/NetworkContext'
 import { CIRCLE_RPC_URL } from '@/lib/circle-config'
 import { logSafeError, runProbe } from '@/lib/credential-diagnostics'
 import { friendlyWalletError } from '@/lib/wallet-errors'
+import {
+  forgetCredential,
+  readCredential,
+  readRemember,
+  setRemember as setRememberPref,
+  writeCredential,
+} from '@/lib/credential-store'
 
 /** Parse a USDC display string (e.g. "12.50") to raw bigint (6 decimals). */
 function parseUsdc(amount: string): bigint {
@@ -59,20 +66,15 @@ export interface CircleWallet {
   register: (username: string) => Promise<void>
   login:    () => Promise<void>
   logout:   () => void
+  remember: boolean
+  setRemember: (on: boolean) => void
   sendUsdc: (to: Hex, amountUsd: string) => Promise<string>
 }
 
 // ── Security helpers ──────────────────────────────────────────────────────────
 
-// CRIT-01: Structural validation — prevents XSS injecting a fake credential via sessionStorage.
-function isValidCredentialShape(obj: unknown): obj is WebAuthnCredential {
-  if (typeof obj !== 'object' || obj === null) return false
-  const c = obj as Record<string, unknown>
-  return (
-    typeof c.id === 'string' && c.id.length > 0 &&
-    typeof c.publicKey === 'string' && /^0x[0-9a-fA-F]+$/.test(c.publicKey)
-  )
-}
+// CRIT-01: structural validation of the stored credential lives in
+// credential-store, so every read path (restore, register, login) is guarded.
 
 // CRIT-02: Strict amount validation — blocks scientific notation, overflow, negatives.
 const SAFE_AMOUNT_REGEX = /^\d{1,12}(\.\d{1,6})?$/
@@ -91,9 +93,6 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 // WebAuthnCredential is compatible with P256Credential (both have id + publicKey).
 function toP256(cred: WebAuthnCredential): P256Credential { return cred }
 
-// Session key includes network so testnet/mainnet sessions never cross.
-function sessionKey(network: string) { return `oc_credential_${network}` }
-
 // ── Hook ─────────────────────────────────────────────────────────────────────
 export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
   const [credential, setCredential] = useState<WebAuthnCredential | null>(null)
@@ -102,6 +101,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
   const [txState, setTxState]       = useState<TxState>('idle')
   const [txHash, setTxHash]         = useState<string | null>(null)
   const [txError, setTxError]       = useState<string | null>(null)
+  const [remember, setRememberState] = useState(false)
   const sendingRef                  = useRef(false)
 
   const CLIENT_URL = CIRCLE_RPC_URL
@@ -135,7 +135,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
   useEffect(() => {
     if (prevNetworkRef.current === netConfig.network) return
     prevNetworkRef.current = netConfig.network
-    sessionStorage.removeItem(sessionKey(netConfig.network === 'mainnet' ? 'testnet' : 'mainnet'))
+    forgetCredential(netConfig.network === 'mainnet' ? 'testnet' : 'mainnet')
     setCredential(null)
     setAddress(null)
     setState('idle')
@@ -145,33 +145,42 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
     sendingRef.current = false
   }, [netConfig.network])
 
-  // ── Restore session on mount (deferred to avoid react/set-state-in-effect) ─
+  // ── Restore on mount (deferred to avoid react/set-state-in-effect) ─────────
+  // Reads IndexedDB, so a wallet remembered on this device opens without a
+  // passkey prompt. Opening is prompt-free; spending never is.
   useEffect(() => {
+    let cancelled = false
     const t = setTimeout(() => {
-      try {
-        const raw = sessionStorage.getItem(sessionKey(netConfig.network))
-        if (!raw) return
-        let parsed: unknown
-        try { parsed = JSON.parse(raw) } catch { sessionStorage.removeItem(sessionKey(netConfig.network)); return }
-        if (!isValidCredentialShape(parsed)) { sessionStorage.removeItem(sessionKey(netConfig.network)); return }
-        const cred = parsed
-        void (async () => {
-          const pubClient = makePublicClient()
+      void (async () => {
+        const cred = await readCredential(netConfig.network)
+        if (cancelled) return
+        setRememberState(await readRemember(netConfig.network))
+        if (!cred) return
+        try {
           const account = await toCircleSmartAccount({
-            client: pubClient,
+            client: makePublicClient(),
             owner: toWebAuthnAccount({ credential: toP256(cred) }),
           })
+          if (cancelled) return
           setCredential(cred)
           setAddress(account.address)
           setState('ready')
-        })()
-      } catch {
-        sessionStorage.removeItem(sessionKey(netConfig.network))
-      }
+        } catch {
+          // Credential present but unusable (e.g. smart-account derivation
+          // failed) — fall back to the setup screen rather than trapping.
+          void forgetCredential(netConfig.network)
+        }
+      })()
     }, 0)
-    return () => clearTimeout(t)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { cancelled = true; clearTimeout(t) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [netConfig.network]) // intentionally limited — rebuild on network change only
+
+  // ── "Remember me on this device" ───────────────────────────────────────────
+  const setRemember = useCallback((on: boolean) => {
+    setRememberState(on)
+    void setRememberPref(netConfig.network, on)
+  }, [netConfig.network])
 
   // ── Register ───────────────────────────────────────────────────────────────
   const register = useCallback(async (username: string) => {
@@ -183,7 +192,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
         mode: WebAuthnMode.Register,
         username,
       })
-      sessionStorage.setItem(sessionKey(netConfig.network), JSON.stringify(cred))
+      await writeCredential(netConfig.network, cred, remember)
       const pubClient = makePublicClient()
       const account = await toCircleSmartAccount({
         client: pubClient,
@@ -198,7 +207,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       void runProbe(netConfig)
       setTxError(friendlyWalletError(err, { username }))
     }
-  }, [makePasskeyTransport, makePublicClient, netConfig.network])
+  }, [makePasskeyTransport, makePublicClient, netConfig.network, remember])
 
   // ── Login ──────────────────────────────────────────────────────────────────
   const login = useCallback(async () => {
@@ -209,7 +218,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
         transport: makePasskeyTransport(),
         mode: WebAuthnMode.Login,
       })
-      sessionStorage.setItem(sessionKey(netConfig.network), JSON.stringify(cred))
+      await writeCredential(netConfig.network, cred, remember)
       const pubClient = makePublicClient()
       const account = await toCircleSmartAccount({
         client: pubClient,
@@ -224,11 +233,12 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       void runProbe(netConfig)
       setTxError(friendlyWalletError(err))
     }
-  }, [makePasskeyTransport, makePublicClient, netConfig.network])
+  }, [makePasskeyTransport, makePublicClient, netConfig.network, remember])
 
   // ── Logout ─────────────────────────────────────────────────────────────────
   const logout = useCallback(() => {
-    sessionStorage.removeItem(sessionKey(netConfig.network))
+    void forgetCredential(netConfig.network)
+    setRememberState(false)
     setCredential(null)
     setAddress(null)
     setState('idle')
@@ -297,6 +307,8 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
     register,
     login,
     logout,
+    remember,
+    setRemember,
     sendUsdc,
   }
 }
