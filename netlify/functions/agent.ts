@@ -19,7 +19,19 @@
 
 import { AGENT_TOOLS_ANTHROPIC } from '../../src/lib/agent-tools-schema'
 
-const MINIMAX_BASE = 'https://api.minimax.io/anthropic'
+/**
+ * Base URL — a constant, deliberately not read from the environment.
+ *
+ * MINIMAX_APIKEY is the only variable this function consumes, and it exists
+ * only because a real credential cannot be hardcoded.
+ *
+ * Note the path is `/anthropic`, not `/v1`. Both routes work and both were
+ * exercised with tool calling, but the OpenAI-compatible one inlines `<think>`
+ * blocks into `content` — the reasoning would end up in the text the user
+ * reads. Here thinking arrives as its own content block and comes back under
+ * a separate field.
+ */
+const MINIMAX_BASE_URL = 'https://api.minimax.io/anthropic'
 const DEFAULT_MODEL = 'MiniMax-M3'
 
 /** Cap one turn so a single request cannot burn an unbounded amount. */
@@ -163,7 +175,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResult> => {
 
   let upstream: Response
   try {
-    upstream = await fetch(`${MINIMAX_BASE}/v1/messages`, {
+    upstream = await fetch(`${MINIMAX_BASE_URL}/v1/messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
