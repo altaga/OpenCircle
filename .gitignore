@@ -153,3 +153,6 @@ vite.config.ts.timestamp-*
 
 # Project-local toolchain (bun installed via npm --prefix .tools, not global)
 /.tools/
+
+# Stray Arc Studio preview debug logs (committed by accident)
+*.jsonl
