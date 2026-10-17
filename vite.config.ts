@@ -57,7 +57,21 @@ export default defineConfig({
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB — large bundle from Circle SDK
         // Cache app shell + fonts; skip large crypto chunks (they must be fresh)
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // The Circle client key is inlined into the JS bundle, so a stale
+        // precached shell means a stale credential and a guaranteed 401.
+        // Serve navigations network-first: offline still works from cache,
+        // but an online visitor always gets the current build.
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
+          {
+            urlPattern: ({ request }: { request: Request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'opencircle-app-shell',
+              networkTimeoutSeconds: 3,
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'CacheFirst',
