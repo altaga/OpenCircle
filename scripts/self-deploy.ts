@@ -245,7 +245,6 @@ function validateChain(value: string, supportedChains: string[]): string {
 }
 
 /**
- * Canonical version lives in `compass-deploy-helpers.ts` (`assertNumbersSurviveJsonParse`).
  * self-deploy.ts runs standalone in the sandbox with no local imports (recovered
  * file-for-file from `references/self-deploy-script.ts.txt` if corrupted), so this
  * is a duplicate, not a shared import.
