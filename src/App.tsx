@@ -15,7 +15,6 @@ import { SendPanel } from '@/components/SendPanel'
 import { ReceivePanel } from '@/components/ReceivePanel'
 import { SwapPanel } from '@/components/SwapPanel'
 import { BridgePanel } from '@/components/BridgePanel'
-import { FooterCredit } from '@/components/FooterCredit'
 import type { Hex } from 'viem'
 
 type Tab = 'send' | 'receive' | 'swap' | 'bridge'
@@ -114,9 +113,6 @@ function AppInner() {
             {tab === 'bridge'  && <BridgePanel />}
           </motion.div>
         </AnimatePresence>
-
-        {/* Sits above the pb-28 reserved for the fixed tab bar. */}
-        <FooterCredit className="mt-6" />
       </div>
 
       {/* Bottom tab bar */}
