@@ -16,6 +16,7 @@ import { ReceivePanel } from '@/components/ReceivePanel'
 import { SwapPanel } from '@/components/SwapPanel'
 import { BridgePanel } from '@/components/BridgePanel'
 import { InstallBanner } from '@/components/InstallBanner'
+import { SplashScreen } from '@/components/SplashScreen'
 import type { Hex } from 'viem'
 
 type Tab = 'send' | 'receive' | 'swap' | 'bridge'
@@ -32,6 +33,10 @@ function AppInner() {
   const wallet  = useCircleWallet(netConfig)
   const balance = useUsdcBalance(wallet.state === 'ready' ? wallet.address : null, netConfig)
   const [tab, setTab] = useState<Tab>('send')
+
+  // Holds the frame while IndexedDB is consulted, so a returning user never
+  // sees the sign-in card flash before the dashboard.
+  if (wallet.state === 'restoring') return <SplashScreen />
 
   if (wallet.state !== 'ready') {
     return (

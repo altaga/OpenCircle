@@ -53,8 +53,23 @@ function formatUsdc(raw: bigint): string {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-export type WalletState = 'idle' | 'registering' | 'logging_in' | 'ready' | 'error'
+export type WalletState = 'restoring' | 'idle' | 'registering' | 'logging_in' | 'ready' | 'error'
 export type TxState     = 'idle' | 'signing' | 'confirming' | 'success' | 'error'
+
+/**
+ * How long the splash stays up once a wallet has actually been restored.
+ *
+ * Restore itself is fast; the hold is there so arriving at the dashboard feels
+ * deliberate instead of a snap. It is *not* applied when no credential is
+ * found — a first-time visitor goes straight to the sign-in card.
+ */
+export const SPLASH_MIN_MS = 3000
+
+function holdFor(startedAt: number, ms: number): Promise<void> {
+  const remaining = ms - (Date.now() - startedAt)
+  if (remaining <= 0) return Promise.resolve()
+  return new Promise((resolve) => setTimeout(resolve, remaining))
+}
 
 export interface CircleWallet {
   address:  Hex
@@ -96,7 +111,7 @@ function toP256(cred: WebAuthnCredential): P256Credential { return cred }
 export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
   const [credential, setCredential] = useState<WebAuthnCredential | null>(null)
   const [address, setAddress]       = useState<Hex | null>(null)
-  const [state, setState]           = useState<WalletState>('idle')
+  const [state, setState]           = useState<WalletState>('restoring')
   const [txState, setTxState]       = useState<TxState>('idle')
   const [txHash, setTxHash]         = useState<string | null>(null)
   const [txError, setTxError]       = useState<string | null>(null)
@@ -144,22 +159,31 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
     sendingRef.current = false
   }, [netConfig.network])
 
-  // ── Restore on mount (deferred to avoid react/set-state-in-effect) ─────────
+  // ── Restore on boot (deferred to avoid react/set-state-in-effect) ─────────
+  // Starts in the `restoring` state so the UI holds a splash instead of
+  // painting the sign-in card and snapping to the dashboard a moment later.
   // Reads IndexedDB, so a wallet remembered on this device opens without a
   // passkey prompt. Opening is prompt-free; spending never is.
   useEffect(() => {
     let cancelled = false
+    const startedAt = Date.now()
     const t = setTimeout(() => {
       void (async () => {
         const cred = await readCredential(netConfig.network)
+        const remembered = await readRemember(netConfig.network)
         if (cancelled) return
-        setRememberState(await readRemember(netConfig.network))
-        if (!cred) return
+        setRememberState(remembered)
+
+        if (!cred) {
+          setState('idle')
+          return
+        }
         try {
           const account = await toCircleSmartAccount({
             client: makePublicClient(),
             owner: toWebAuthnAccount({ credential: toP256(cred) }),
           })
+          await holdFor(startedAt, SPLASH_MIN_MS)
           if (cancelled) return
           setCredential(cred)
           setAddress(account.address)
@@ -168,6 +192,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
           // Credential present but unusable (e.g. smart-account derivation
           // failed) — fall back to the setup screen rather than trapping.
           void forgetCredential(netConfig.network)
+          if (!cancelled) setState('idle')
         }
       })()
     }, 0)
