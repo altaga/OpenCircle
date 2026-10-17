@@ -28,6 +28,7 @@ import { createBundlerClient, toWebAuthnAccount } from 'viem/account-abstraction
 import { arcTestnet } from 'viem/chains'
 import { arc } from 'viem/chains'
 import type { NetworkConfig } from '@/context/NetworkContext'
+import { logSafeError, runProbe } from '@/lib/credential-diagnostics'
 
 /** Parse a USDC display string (e.g. "12.50") to raw bigint (6 decimals). */
 function parseUsdc(amount: string): bigint {
@@ -195,6 +196,8 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       setState('ready')
     } catch (err) {
       setState('error')
+      logSafeError('register', err)
+      void runProbe(netConfig)
       setTxError(err instanceof Error ? err.message : String(err))
     }
   }, [makePasskeyTransport, makePublicClient, netConfig.network])
@@ -219,6 +222,8 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       setState('ready')
     } catch (err) {
       setState('error')
+      logSafeError('login', err)
+      void runProbe(netConfig)
       setTxError(err instanceof Error ? err.message : String(err))
     }
   }, [makePasskeyTransport, makePublicClient, netConfig.network])

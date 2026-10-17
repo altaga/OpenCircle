@@ -3,6 +3,7 @@
  * USDC address verified onchain: 0x3600000000000000000000000000000000000000
  */
 import { createContext, useContext, type ReactNode } from 'react'
+import { exposeDiagnostics, reportCredentials } from '@/lib/credential-diagnostics'
 
 export type Network = 'mainnet'
 
@@ -30,6 +31,10 @@ interface NetworkCtx {
 const Ctx = createContext<NetworkCtx | null>(null)
 
 export function NetworkProvider({ children }: { children: ReactNode }) {
+  // One-shot, offline, no secrets: booleans and enums only.
+  reportCredentials(MAINNET_CONFIG)
+  exposeDiagnostics(MAINNET_CONFIG)
+
   return (
     <Ctx.Provider value={{ config: MAINNET_CONFIG, isMainnet: true }}>
       {children}
