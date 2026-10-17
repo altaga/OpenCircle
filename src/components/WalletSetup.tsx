@@ -175,7 +175,8 @@ export function WalletSetup({ state, error, onRegister, onLogin }: Props) {
                 style={{ background:'rgba(186,43,76,0.08)', color:'#ba2b4c', border:'1px solid rgba(186,43,76,0.16)' }}
               >
                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                <span>{error.slice(0, 160)}</span>
+                {/* `friendlyWalletError` already bounds and scrubs this string. */}
+                <span>{error.slice(0, 240)}</span>
               </motion.div>
             )}
           </div>

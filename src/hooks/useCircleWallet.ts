@@ -29,6 +29,7 @@ import { arc } from 'viem/chains'
 import type { NetworkConfig } from '@/context/NetworkContext'
 import { CIRCLE_RPC_URL } from '@/lib/circle-config'
 import { logSafeError, runProbe } from '@/lib/credential-diagnostics'
+import { friendlyWalletError } from '@/lib/wallet-errors'
 
 /** Parse a USDC display string (e.g. "12.50") to raw bigint (6 decimals). */
 function parseUsdc(amount: string): bigint {
@@ -195,7 +196,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       setState('error')
       logSafeError('register', err)
       void runProbe(netConfig)
-      setTxError(err instanceof Error ? err.message : String(err))
+      setTxError(friendlyWalletError(err, { username }))
     }
   }, [makePasskeyTransport, makePublicClient, netConfig.network])
 
@@ -221,7 +222,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       setState('error')
       logSafeError('login', err)
       void runProbe(netConfig)
-      setTxError(err instanceof Error ? err.message : String(err))
+      setTxError(friendlyWalletError(err))
     }
   }, [makePasskeyTransport, makePublicClient, netConfig.network])
 
@@ -278,11 +279,12 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       sendingRef.current = false
       return hash
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      logSafeError('sendUsdc', err)
+      const msg = friendlyWalletError(err)
       setTxError(msg)
       setTxState('error')
       sendingRef.current = false
-      throw err
+      throw new Error(msg)
     }
   }, [credential, address, makePublicClient, makeBundlerClient, netConfig])
 

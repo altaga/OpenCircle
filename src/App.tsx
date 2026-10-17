@@ -96,13 +96,16 @@ function AppInner() {
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
             {tab === 'send'    && (
+              // sendUsdc already records the failure in txError; swallowing the
+              // rejection here keeps a failed send out of the console as an
+              // unhandled rejection.
               <SendPanel
                 balance={balance.display}
                 rawBalance={balance.raw}
                 txState={wallet.txState}
                 txHash={wallet.txHash}
                 txError={wallet.txError}
-                onSend={(to: Hex, amount: string) => void wallet.sendUsdc(to, amount)}
+                onSend={(to: Hex, amount: string) => { void wallet.sendUsdc(to, amount).catch(() => {}) }}
               />
             )}
             {tab === 'receive' && <ReceivePanel address={wallet.address} />}
