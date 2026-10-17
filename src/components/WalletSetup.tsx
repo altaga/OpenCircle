@@ -7,6 +7,7 @@ import { Fingerprint, LogIn, AlertCircle, Loader2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { WalletState } from '@/hooks/useCircleWallet'
 import { LogoMark } from '@/components/Logo'
+import { FooterCredit } from '@/components/FooterCredit'
 
 interface Props {
   state: WalletState
@@ -182,9 +183,7 @@ export function WalletSetup({ state, error, onRegister, onLogin }: Props) {
           </div>
         </div>
 
-        <p className="mt-6 text-center text-xs" style={{ color:'#8a849c' }}>
-          Open source · 100% Circle · Arc Mainnet
-        </p>
+        <FooterCredit className="mt-6" />
       </motion.div>
     </div>
   )
