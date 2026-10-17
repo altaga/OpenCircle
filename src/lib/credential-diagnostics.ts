@@ -196,12 +196,20 @@ export function logSafeError(scope: string, err: unknown): SafeError {
 let reported = false
 let lastProbe: Promise<ProbeResult> | null = null
 
+/** Append `?cred-diag=1` to the URL to run the live probe on load. */
+function autoProbeRequested(): boolean {
+  return typeof location !== 'undefined' && location.search.includes('cred-diag')
+}
+
 /** One-shot static report at startup. No network, no secrets. */
 export function reportCredentials(t: CredentialTarget): CredentialReport | null {
   if (reported) return null
   reported = true
   const report = describeCredential(t)
   console.info('[cred-diag] credential report', report)
+  // The probe is meaningless off-browser (Origin is forgeable), so it only
+  // runs when explicitly asked for, from a real browser at a real domain.
+  if (autoProbeRequested()) void runProbe(t)
   return report
 }
 
