@@ -1,9 +1,10 @@
 /**
- * ReceivePanel — show address + copyable QR placeholder.
+ * ReceivePanel — show address + real QR code.
  */
 import { useState } from 'react'
-import { Copy, Check, QrCode } from 'lucide-react'
+import { Copy, Check } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { QRCodeSVG } from 'qrcode.react'
 import type { Hex } from 'viem'
 
 interface Props { address: Hex }
@@ -34,16 +35,21 @@ export function ReceivePanel({ address }: Props) {
           Your USDC address
         </p>
 
-        {/* QR placeholder — shows icon with a clear "no QR library" note */}
+        {/* Real QR — white quiet zone so scanners lock on */}
         <div
-          className="mb-5 flex h-44 w-full items-center justify-center rounded-2xl"
-          style={{ background:'rgba(18,45,69,0.04)', border:'1px dashed rgba(18,45,69,0.14)' }}
+          className="mb-5 flex w-full items-center justify-center rounded-2xl p-4"
+          style={{ background:'rgba(18,45,69,0.04)', border:'1px solid rgba(18,45,69,0.08)' }}
         >
-          <div className="text-center">
-            <QrCode size={44} style={{ color:'rgba(18,45,69,0.25)', margin:'0 auto' }} />
-            <p className="mt-2 text-xs" style={{ color:'rgba(18,45,69,0.35)' }}>
-              QR code — add qrcode.react for production
-            </p>
+          <div className="rounded-xl bg-white p-3" style={{ boxShadow:'0 2px 12px rgba(18,45,69,0.08)' }}>
+            <QRCodeSVG
+              value={address}
+              size={176}
+              level="M"
+              bgColor="#ffffff"
+              fgColor="#122d45"
+              marginSize={1}
+              title="Your USDC deposit address"
+            />
           </div>
         </div>
 
@@ -74,7 +80,7 @@ export function ReceivePanel({ address }: Props) {
         </motion.button>
 
         <p className="mt-3 text-center text-xs" style={{ color:'#8a849c' }}>
-          Send only USDC on Arc Testnet to this address
+          Send only USDC on Arc Mainnet to this address
         </p>
       </div>
     </div>

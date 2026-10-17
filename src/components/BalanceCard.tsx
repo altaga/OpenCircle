@@ -86,7 +86,7 @@ export function BalanceCard({ address, balance, loading, onRefresh }: Props) {
           <span className="text-xl font-medium" style={{ color:'#8a849c' }}>USDC</span>
         </motion.div>
 
-        <p className="mt-1.5 text-xs" style={{ color:'#8a849c' }}>Arc Testnet</p>
+        <p className="mt-1.5 text-xs" style={{ color:'#8a849c' }}>Arc Mainnet</p>
 
         {/* Address pill */}
         <button

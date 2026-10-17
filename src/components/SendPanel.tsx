@@ -17,7 +17,7 @@ interface Props {
   onSend: (to: Hex, amount: string) => void
 }
 
-/** Arc Testnet block explorer */
+/** Arc Mainnet block explorer */
 function buildTxExplorerUrl(txHash: string): string {
   const hash = /^0x[0-9a-fA-F]{64}$/.test(txHash) ? txHash : ''
   if (!hash) return '#'
