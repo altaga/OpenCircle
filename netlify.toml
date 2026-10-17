@@ -14,6 +14,17 @@
   # Must match .bun-version; Netlify resolves both and they were disagreeing.
   BUN_VERSION  = "1.3.14"
 
+[functions]
+  # MINIMAX_APIKEY lives here, server-side. A function is the only place in this
+  # project where a real secret is allowed to exist.
+  directory    = "netlify/functions"
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from   = "/api/agent"
+  to     = "/.netlify/functions/agent"
+  status = 200
+
 [[headers]]
   for = "/*"
   [headers.values]
