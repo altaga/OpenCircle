@@ -3,7 +3,7 @@
  * Send · Receive · Swap · Bridge · Arc Mainnet
  */
 import { useState } from 'react'
-import { Send, QrCode, ArrowDownUp, ArrowLeftRight, LogOut } from 'lucide-react'
+import { Send, QrCode, ArrowDownUp, ArrowLeftRight, LogOut, Bot } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { NetworkProvider, useNetwork } from '@/context/NetworkContext'
 import { LogoFull } from '@/components/Logo'
@@ -17,15 +17,19 @@ import { SwapPanel } from '@/components/SwapPanel'
 import { BridgePanel } from '@/components/BridgePanel'
 import { InstallBanner } from '@/components/InstallBanner'
 import { SplashScreen } from '@/components/SplashScreen'
+import { AgentPanel } from '@/components/AgentPanel'
+import { useAgent } from '@/hooks/useAgent'
+import type { ToolContext } from '@/lib/agent-tools'
 import type { Hex } from 'viem'
 
-type Tab = 'send' | 'receive' | 'swap' | 'bridge'
+type Tab = 'send' | 'receive' | 'swap' | 'bridge' | 'agent'
 
 const TABS: { id: Tab; label: string; Icon: React.ElementType }[] = [
   { id: 'send',    label: 'Send',    Icon: Send },
   { id: 'receive', label: 'Receive', Icon: QrCode },
   { id: 'swap',    label: 'Swap',    Icon: ArrowDownUp },
   { id: 'bridge',  label: 'Bridge',  Icon: ArrowLeftRight },
+  { id: 'agent',   label: 'Agent',   Icon: Bot },
 ]
 
 function AppInner() {
@@ -33,6 +37,19 @@ function AppInner() {
   const wallet  = useCircleWallet(netConfig)
   const balance = useUsdcBalance(wallet.state === 'ready' ? wallet.address : null, netConfig)
   const [tab, setTab] = useState<Tab>('send')
+
+  // The agent executes its tools here, not on the server: this is where the
+  // Circle client key and the passkey live. Null until the wallet is ready.
+  const toolCtx: ToolContext | null =
+    wallet.state === 'ready'
+      ? {
+          address: wallet.address as Hex,
+          clientKey: netConfig.clientKey,
+          chainPath: netConfig.chainPath,
+          usdcContractAddress: netConfig.usdcContractAddress as Hex,
+        }
+      : null
+  const agent = useAgent(toolCtx)
 
   // Holds the frame while IndexedDB is consulted, so a returning user never
   // sees the sign-in card flash before the dashboard.
@@ -119,6 +136,16 @@ function AppInner() {
             {tab === 'receive' && <ReceivePanel address={wallet.address} />}
             {tab === 'swap'    && <SwapPanel />}
             {tab === 'bridge'  && <BridgePanel />}
+            {tab === 'agent'   && (
+              <AgentPanel
+                messages={agent.messages}
+                busy={agent.busy}
+                error={agent.error}
+                onSend={(t) => void agent.send(t)}
+                onStop={agent.stop}
+                onReset={agent.reset}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
 
