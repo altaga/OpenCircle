@@ -17,6 +17,9 @@ import { createPublicClient, erc20Abi, formatUnits, type Hex } from 'viem'
 import { arc } from 'viem/chains'
 import { toModularTransport } from '@circle-fin/modular-wallets-core'
 import { CIRCLE_RPC_URL } from '@/lib/circle-config'
+import { AGENT_TOOL_NAMES } from '@/lib/agent-tools-schema'
+
+export { AGENT_TOOLS } from '@/lib/agent-tools-schema'
 
 export interface ToolContext {
   address: Hex
@@ -28,43 +31,6 @@ export interface ToolContext {
 export type ToolResult =
   | { ok: true; data: Record<string, unknown> }
   | { ok: false; error: string }
-
-interface ToolSpec {
-  type: 'function'
-  function: {
-    name: string
-    description: string
-    parameters: { type: 'object'; properties: Record<string, unknown>; required: string[] }
-  }
-}
-
-const NO_ARGS = { type: 'object' as const, properties: {}, required: [] }
-
-/** OpenAI-compatible tool schemas. Kept literal so they can be diffed. */
-export const AGENT_TOOLS: ToolSpec[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'get_usdc_balance',
-      description:
-        "Read this wallet's USDC balance on Arc Mainnet. Read-only; it never moves funds. " +
-        'Use this whenever the user asks how much they hold, what is in the wallet, or before ' +
-        'any amount is mentioned.',
-      parameters: NO_ARGS,
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_wallet_info',
-      description:
-        'Get this wallet\'s address and the network it lives on. Read-only. ' +
-        'Use this when the user asks for the address, wants to send funds somewhere, or ' +
-        'asks which chain or network this is.',
-      parameters: NO_ARGS,
-    },
-  },
-]
 
 function client(ctx: ToolContext) {
   return createPublicClient({
@@ -83,6 +49,12 @@ export async function runAgentTool(
 ): Promise<ToolResult> {
   if (!ctx.address || ctx.address === '0x') {
     return { ok: false, error: 'wallet_not_connected' }
+  }
+
+  // Allowlist first: the name comes from a model response, so it is untrusted
+  // input even though the server chose the catalog.
+  if (!AGENT_TOOL_NAMES.includes(name)) {
+    return { ok: false, error: `unknown_tool:${name}` }
   }
 
   try {

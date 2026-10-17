@@ -7,19 +7,29 @@
  * way would be published to the internet with the JavaScript. A Circle *client*
  * key is meant to travel that way; an inference key is not.
  *
- * This function never touches the wallet. It can only produce a plan. Tool
+ * This function never touches the wallet. It only produces a plan. Tool
  * execution happens in the browser, where the passkey lives — the signing key is
  * device-bound, so no model output can authorise a transfer by itself.
+ *
+ * Uses the Anthropic-compatible route rather than the OpenAI-compatible one.
+ * Both work; the OpenAI route inlines `<think>` blocks into `content`, which
+ * would leak reasoning into text the user reads. Here thinking arrives as its
+ * own content block and is returned under a separate key.
  */
 
-const MINIMAX_BASE = 'https://api.minimax.io/v1'
-const DEFAULT_MODEL = 'MiniMax-M2.7'
+import { AGENT_TOOLS_ANTHROPIC } from '../../src/lib/agent-tools-schema'
 
-/** Cap a single turn so one request cannot burn an unbounded amount. */
+const MINIMAX_BASE = 'https://api.minimax.io/anthropic'
+const DEFAULT_MODEL = 'MiniMax-M3'
+
+/** Cap one turn so a single request cannot burn an unbounded amount. */
 const MAX_TOKENS = 800
 
-/** Longest prompt we will forward. Long input is a billing bug, not a use case. */
+/** Longest prompt we forward. Long input is a billing bug, not a use case. */
 const MAX_INPUT_BYTES = 16_000
+
+/** Most turns we keep. Older ones are dropped rather than truncated. */
+const MAX_TURNS = 24
 
 interface NetlifyEvent {
   httpMethod: string
@@ -56,10 +66,8 @@ function json(status: number, payload: unknown): NetlifyResult {
 function originAllowed(event: NetlifyEvent): boolean {
   const site = process.env.URL
   const origin = event.headers['origin']
-  // No configured site URL means no allowlist to enforce; fail closed instead of
-  // silently serving an open proxy.
   if (!site) return false
-  if (!origin) return false // same-origin server-to-server is not a browser flow
+  if (!origin) return false // not a browser flow; fail closed
   try {
     return new URL(origin).host === new URL(site).host
   } catch {
@@ -67,16 +75,50 @@ function originAllowed(event: NetlifyEvent): boolean {
   }
 }
 
-export const handler = async (event: NetlifyEvent): Promise<NetlifyResult> => {
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 204,
-      headers: { 'Allow': 'POST, OPTIONS' },
-      body: '',
+/** Collapse the Anthropic block list into a shape the browser can use directly. */
+function normalise(payload: {
+  stop_reason?: string
+  content?: Array<Record<string, unknown>>
+  usage?: Record<string, unknown>
+  model?: string
+}) {
+  let text = ''
+  let thinking = ''
+  const toolCalls: Array<{ id: string; name: string; input: unknown }> = []
+
+  for (const block of payload.content ?? []) {
+    switch (block.type) {
+      case 'text':
+        text += String(block.text ?? '')
+        break
+      case 'thinking':
+        thinking += String(block.thinking ?? '')
+        break
+      case 'tool_use':
+        toolCalls.push({
+          id: String(block.id ?? ''),
+          name: String(block.name ?? ''),
+          input: block.input ?? {},
+        })
+        break
+      default:
+        // Unknown block types are ignored, not forwarded blindly.
+        break
     }
   }
-  if (event.httpMethod !== 'POST') return json(405, { error: 'method_not_allowed' })
 
+  return {
+    model: payload.model ?? DEFAULT_MODEL,
+    stopReason: payload.stop_reason ?? 'end_turn',
+    text: text.trim(),
+    thinking: thinking.trim() || null,
+    toolCalls,
+    usage: payload.usage ?? null,
+  }
+}
+
+export const handler = async (event: NetlifyEvent): Promise<NetlifyResult> => {
+  if (event.httpMethod !== 'POST') return json(405, { error: 'method_not_allowed' })
   if (!originAllowed(event)) return json(403, { error: 'origin_not_allowed' })
 
   const key = process.env.MINIMAX_APIKEY
@@ -89,18 +131,21 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResult> => {
     return json(400, { error: 'invalid_json' })
   }
 
-  const { messages, model } = (parsed ?? {}) as { messages?: unknown; model?: string }
+  const { messages, system, model } = (parsed ?? {}) as {
+    messages?: unknown
+    system?: unknown
+    model?: string
+  }
+
   if (!Array.isArray(messages) || messages.length === 0) {
     return json(400, { error: 'messages_required' })
   }
-  const payloadBytes = Buffer.byteLength(JSON.stringify(messages), 'utf8')
-  if (payloadBytes > MAX_INPUT_BYTES) {
-    return json(413, { error: 'prompt_too_large', bytes: payloadBytes, limit: MAX_INPUT_BYTES })
+  if (Buffer.byteLength(JSON.stringify(messages), 'utf8') > MAX_INPUT_BYTES) {
+    return json(413, { error: 'prompt_too_large' })
   }
 
-  // Only forward messages that look like chat turns, and only the fields the
-  // protocol actually defines. An agent client must not be able to smuggle
-  // arbitrary keys (or a tool payload we then trust) through this shape.
+  // Only chat turns with a string role and string content survive. An agent
+  // client must not be able to smuggle arbitrary keys through this shape.
   const safeMessages = messages
     .filter(
       (m): m is { role: string; content: string } =>
@@ -108,9 +153,9 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResult> => {
         typeof (m as { role?: unknown }).role === 'string' &&
         typeof (m as { content?: unknown }).content === 'string',
     )
-    .slice(-24)
+    .slice(-MAX_TURNS)
     .map((m) => ({
-      role: ['system', 'user', 'assistant'].includes(m.role) ? m.role : 'user',
+      role: ['user', 'assistant'].includes(m.role) ? m.role : 'user',
       content: m.content.slice(0, 8000),
     }))
 
@@ -118,16 +163,20 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResult> => {
 
   let upstream: Response
   try {
-    upstream = await fetch(`${MINIMAX_BASE}/chat/completions`, {
+    upstream = await fetch(`${MINIMAX_BASE}/v1/messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`,
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
         model: typeof model === 'string' && /^[\w.-]{1,64}$/.test(model) ? model : DEFAULT_MODEL,
-        messages: safeMessages,
         max_tokens: MAX_TOKENS,
+        // The catalog is server-owned. Tools supplied by the caller are ignored.
+        tools: AGENT_TOOLS_ANTHROPIC,
+        system: typeof system === 'string' ? system.slice(0, 2000) : undefined,
+        messages: safeMessages,
       }),
     })
   } catch {
@@ -136,9 +185,6 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResult> => {
 
   const text = await upstream.text()
 
-  // Pass the status through, but translate the ones the UI can act on. The raw
-  // upstream body is returned only on success — an error body can echo request
-  // context, and this function has no business forwarding that verbatim.
   if (!upstream.ok) {
     if (upstream.status === 402) {
       return json(402, {
@@ -150,12 +196,14 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResult> => {
       return json(502, { error: 'upstream_rejected_key' })
     }
     if (upstream.status === 429) return json(429, { error: 'rate_limited_upstream' })
+    // The raw upstream body is not forwarded: an error body can echo request
+    // context, and this function has no business passing that to the client.
     return json(502, { error: 'upstream_error', status: upstream.status })
   }
 
   try {
-    return json(200, JSON.parse(text))
+    return json(200, normalise(JSON.parse(text)))
   } catch {
-    return json(502, { error: 'upstream_returned_non_json' })
+    return json(502, { error: 'upstream_returned_unexpected_shape' })
   }
 }
