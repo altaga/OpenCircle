@@ -28,7 +28,6 @@ import { createBundlerClient, toWebAuthnAccount } from 'viem/account-abstraction
 import { arc } from 'viem/chains'
 import type { NetworkConfig } from '@/context/NetworkContext'
 import { CIRCLE_RPC_URL } from '@/lib/circle-config'
-import { logSafeError, runProbe } from '@/lib/credential-diagnostics'
 import { friendlyWalletError } from '@/lib/wallet-errors'
 import {
   forgetCredential,
@@ -203,8 +202,6 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       setState('ready')
     } catch (err) {
       setState('error')
-      logSafeError('register', err)
-      void runProbe(netConfig)
       setTxError(friendlyWalletError(err, { username }))
     }
   }, [makePasskeyTransport, makePublicClient, netConfig.network, remember])
@@ -229,8 +226,6 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       setState('ready')
     } catch (err) {
       setState('error')
-      logSafeError('login', err)
-      void runProbe(netConfig)
       setTxError(friendlyWalletError(err))
     }
   }, [makePasskeyTransport, makePublicClient, netConfig.network, remember])
@@ -289,7 +284,6 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       sendingRef.current = false
       return hash
     } catch (err) {
-      logSafeError('sendUsdc', err)
       const msg = friendlyWalletError(err)
       setTxError(msg)
       setTxState('error')

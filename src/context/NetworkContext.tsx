@@ -4,7 +4,6 @@
  */
 import { createContext, useContext, type ReactNode } from 'react'
 import { ARC_MAINNET, CLIENT_KEY } from '@/lib/circle-config'
-import { exposeDiagnostics, reportCredentials } from '@/lib/credential-diagnostics'
 
 export type Network = 'mainnet'
 
@@ -32,10 +31,6 @@ interface NetworkCtx {
 const Ctx = createContext<NetworkCtx | null>(null)
 
 export function NetworkProvider({ children }: { children: ReactNode }) {
-  // One-shot, offline, no secrets: booleans and enums only.
-  reportCredentials(MAINNET_CONFIG)
-  exposeDiagnostics(MAINNET_CONFIG)
-
   return (
     <Ctx.Provider value={{ config: MAINNET_CONFIG, isMainnet: true }}>
       {children}

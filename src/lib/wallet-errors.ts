@@ -4,11 +4,27 @@
  * Circle's Modular Wallets SDK surfaces raw JSON-RPC failures, and viem wraps
  * some of them as "An unknown RPC error occurred. Details: … Version: viem@x.y.z".
  * None of that tells anyone what to do next. Every rule here produces a plain
- * sentence plus the action to take; the raw text stays in the console, handled
- * by `logSafeError`, and is scrubbed before it can reach the screen.
+ * sentence plus the action to take, scrubbed on the way out so a payload can
+ * never carry the client key to the screen.
  */
 
-import { scrub } from '@/lib/credential-diagnostics'
+import { CLIENT_KEY } from '@/lib/circle-config'
+
+const REDACTED = '[REDACTED]'
+
+/**
+ * Strip the client key out of any text bound for the screen or the console.
+ *
+ * Not a debug aid — a last line of defence. Circle echoes request context back
+ * in some error payloads, and nothing that reaches a user-facing string should
+ * be able to carry the credential with it.
+ */
+export function scrub(input: string): string {
+  if (!CLIENT_KEY) return input
+  let out = input
+  if (out.includes(CLIENT_KEY)) out = out.split(CLIENT_KEY).join(REDACTED)
+  return out
+}
 
 /** Longest user-facing error. Bounded here so callers never have to clip. */
 const MAX_LENGTH = 220
