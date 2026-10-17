@@ -150,3 +150,6 @@ vite.config.ts.timestamp-*
 
 # Accidental self-referencing submodule artifact (was a gitlink with no .gitmodules)
 /OpenCircle
+
+# Project-local toolchain (bun installed via npm --prefix .tools, not global)
+/.tools/
