@@ -1,22 +1,36 @@
 /**
- * Credential storage — IndexedDB, because Safari evicts script-writable storage.
+ * Credential storage — IndexedDB primary, with a localStorage mirror as
+ * belt-and-suspenders. IndexedDB is the source of truth; the mirror is a
+ * fallback for the case where IndexedDB itself is unavailable.
  *
- * Why not localStorage: Safari's ITP applies its 7-day cap to script-writable
- * storage. An honest caveat — IndexedDB is covered by that cap too, so moving
- * off localStorage does not by itself defeat it. What does is *installing the
- * PWA*: Apple exempts Home Screen web apps, which is why `requestPersistentStorage()`
- * and the install prompt live here too. IndexedDB is still the right base —
- * far larger quota, async so it never blocks first paint, and no JSON round trip.
+ * Why IndexedDB and not localStorage: Safari's ITP applies its 7-day cap to
+ * script-writable storage. An honest caveat — IndexedDB is covered by that
+ * cap too, so moving off localStorage does not by itself defeat it. What
+ * does is *installing the PWA*: Apple exempts Home Screen web apps, which
+ * is why `requestPersistentStorage()` and the install prompt live here too.
+ * IndexedDB is still the right base — far larger quota, async so it never
+ * blocks first paint, and no JSON round trip.
  *
- * What is stored is a WebAuthn *public* credential: the credential id and the
- * P-256 public key. The signing key never leaves the authenticator (TPM, Secure
- * Enclave, Android Keystore), so this is not key material and cannot sign on
- * its own. Persisting it only removes the prompt needed to *open* the wallet —
+ * Why a localStorage mirror at all: the mirror is *not* a separate encrypted
+ * channel — there is no encrypted channel, because the stored blob is a
+ * WebAuthn *public* credential (the credential id and the P-256 public key).
+ * The signing key never leaves the authenticator (TPM, Secure Enclave,
+ * Android Keystore), so this is not key material and cannot sign on its
+ * own. The mirror's job is purely robustness: if IndexedDB is blocked
+ * (privacy extension, blocked storage, a private-mode quirk we have not yet
+ * seen), `readCredential` consults the mirror so the user does not silently
+ * land on the sign-in card. The mirror is also under Safari ITP — it does
+ * not replace the PWA install.
+ *
+ * What is stored is the same in both places: a WebAuthn public credential,
+ * a network identifier, and the "remember me on this device" preference.
+ * Persisting them only removes the prompt needed to *open* the wallet —
  * every send still goes through `navigator.credentials.get()`.
  *
- * Tab-vs-device is decided by a marker in sessionStorage, which holds only a
- * boolean and dies with the tab. That keeps the "remember me" preference and
- * the credential itself in IndexedDB, where they survive a browser restart.
+ * Tab-vs-device is decided by a marker in sessionStorage, which holds only
+ * a boolean and dies with the tab. That keeps the "remember me" preference
+ * and the credential itself in IndexedDB, where they survive a browser
+ * restart.
  */
 
 import type { WebAuthnCredential } from '@circle-fin/modular-wallets-core'
@@ -119,6 +133,51 @@ function releaseTab(network: string): void {
   try { sessionStorage.removeItem(tabKey(network)) } catch { /* private mode */ }
 }
 
+// ── Web mirror (localStorage fallback) ───────────────────────────────────────
+//
+// Sidecar copy of the WalletRecord, kept in sync on every write. Read by
+// `readCredential` and `readRemember` only when IndexedDB itself fails
+// (open error, blocked, private-mode quirk) — never on a successful "no
+// record" path. The stored blob is a WebAuthn *public* credential, so the
+// mirror is not a secret; the concern is availability, not confidentiality.
+
+/** Per-network key for the localStorage mirror. */
+const mirrorKey = (network: string) => `oc_wallet_mirror_${network}`
+
+/** Read the mirror for `network`. Returns null on any error or shape failure. */
+function getWebMirror(network: string): WalletRecord | null {
+  try {
+    const raw = localStorage.getItem(mirrorKey(network))
+    if (raw === null) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const r = parsed as Partial<WalletRecord>
+    if (!isValidCredentialShape(r.credential)) return null
+    return { network, credential: r.credential, remember: r.remember === true }
+  } catch {
+    return null
+  }
+}
+
+/** Write the mirror for `network`. Silently ignores quota / blocked errors. */
+function setWebMirror(network: string, rec: WalletRecord): void {
+  try {
+    localStorage.setItem(mirrorKey(network), JSON.stringify(rec))
+  } catch {
+    // localStorage quota, Safari private mode, or an extension blocked it.
+    // The mirror is best-effort; IDB remains the source of truth.
+  }
+}
+
+/** Remove the mirror for `network`. Silent on errors. */
+function clearWebMirror(network: string): void {
+  try {
+    localStorage.removeItem(mirrorKey(network))
+  } catch {
+    // ignore
+  }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -126,6 +185,9 @@ function releaseTab(network: string): void {
  *
  * A tab that created or logged in owns the credential for its lifetime. Any
  * other tab only sees it when the user opted into device persistence.
+ *
+ * If IndexedDB itself fails (blocked / unavailable), falls through to the
+ * localStorage mirror; see the file header for why this is safe.
  */
 export async function readCredential(network: string): Promise<WebAuthnCredential | null> {
   try {
@@ -137,6 +199,14 @@ export async function readCredential(network: string): Promise<WebAuthnCredentia
     }
     return null
   } catch {
+    // IDB itself failed (open error, blocked, private-mode quirk). Try the
+    // mirror so the user does not silently land on the sign-in card.
+    const mirror = getWebMirror(network)
+    if (!mirror) return null
+    if (mirror.remember || ownsTab(network)) {
+      markTab(network)
+      return mirror.credential
+    }
     return null
   }
 }
@@ -149,11 +219,16 @@ export async function writeCredential(
 ): Promise<void> {
   markTab(network)
   if (remember) await requestPersistentStorage()
+  const rec: WalletRecord = { network, credential: cred, remember }
   try {
-    await put({ network, credential: cred, remember })
+    await put(rec)
   } catch {
     // The wallet still works from memory; persistence is best-effort.
   }
+  // Mirror in localStorage — independent of the IDB write so a blocked IDB
+  // does not leave the mirror stale, and a quota'd localStorage does not
+  // corrupt the IDB primary.
+  setWebMirror(network, rec)
 }
 
 /** Turn device persistence on/off without forcing a re-auth. */
@@ -162,16 +237,19 @@ export async function setRemember(network: string, on: boolean): Promise<void> {
   try {
     rec = await get(network)
   } catch {
-    // fall through
+    // IDB unavailable; consult the mirror so the preference is not lost.
+    rec = getWebMirror(network)
   }
   if (!rec) return
   if (on) markTab(network)
+  const updated: WalletRecord = { ...rec, remember: on }
   try {
-    await put({ ...rec, remember: on })
+    await put(updated)
     if (on) await requestPersistentStorage()
   } catch {
-    // ignore
+    // IDB write failed; the mirror below keeps the new state alive.
   }
+  setWebMirror(network, updated)
 }
 
 /** Currently persisted preference, so the toggle can hydrate its initial value. */
@@ -179,13 +257,14 @@ export async function readRemember(network: string): Promise<boolean> {
   try {
     return (await get(network))?.remember === true
   } catch {
-    return false
+    return getWebMirror(network)?.remember === true
   }
 }
 
-/** Sign out: drop the credential and the preference everywhere. */
+/** Sign out: drop the credential, the preference, the tab marker, and the mirror. */
 export async function forgetCredential(network: string): Promise<void> {
   releaseTab(network)
+  clearWebMirror(network)
   try {
     await remove(network)
   } catch {

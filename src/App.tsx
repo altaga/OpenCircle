@@ -3,7 +3,8 @@
  * Send · Receive · Swap · Bridge · Arc Mainnet
  */
 import { useState } from 'react'
-import { Send, QrCode, ArrowDownUp, ArrowLeftRight, LogOut, Bot } from 'lucide-react'
+import { toast } from 'sonner'
+import { Send, QrCode, ArrowDownUp, ArrowLeftRight, LogOut, Bot, X, AlertTriangle } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { NetworkProvider, useNetwork } from '@/context/NetworkContext'
 import { LogoFull } from '@/components/Logo'
@@ -16,9 +17,11 @@ import { ReceivePanel } from '@/components/ReceivePanel'
 import { SwapPanel } from '@/components/SwapPanel'
 import { BridgePanel } from '@/components/BridgePanel'
 import { InstallBanner } from '@/components/InstallBanner'
+import { SessionPersistenceWarning } from '@/components/SessionPersistenceWarning'
 import { SplashScreen } from '@/components/SplashScreen'
 import { AgentPanel } from '@/components/AgentPanel'
 import { useAgent } from '@/hooks/useAgent'
+import { useAppKitActions } from '@/hooks/useAppKitActions'
 import type { ToolContext } from '@/lib/agent-tools'
 import type { Hex } from 'viem'
 
@@ -37,16 +40,36 @@ function AppInner() {
   const wallet  = useCircleWallet(netConfig)
   const balance = useUsdcBalance(wallet.state === 'ready' ? wallet.address : null, netConfig)
   const [tab, setTab] = useState<Tab>('send')
+  const [confirmingLogout, setConfirmingLogout] = useState(false)
+  // The actual sign-out is a two-step gate: this confirm modal proves intent
+  // ("you typed the button, you saw the warning"), and `wallet.logout()` then
+  // proves identity via WebAuthn re-auth. Both are required.
+  const handleSignOut = () => setConfirmingLogout(true)
+  const handleConfirmSignOut = async () => {
+    setConfirmingLogout(false)
+    const wiped = await wallet.logout()
+    if (!wiped) {
+      toast.error("Couldn't verify your passkey. Sign out cancelled.")
+    }
+  }
 
   // The agent executes its tools here, not on the server: this is where the
   // Circle client key and the passkey live. Null until the wallet is ready.
+  // `sendUsdc` is the agent's write tool entry point; `swapUsdc` / `bridgeUsdc`
+  // route through the shared `useAppKitActions` hook so the panels and the
+  // agent go through the same wagmi-connector + AppKit wiring. Every write
+  // tool is gated by an in-chat proposal card AND a WebAuthn prompt.
+  const appKit = useAppKitActions()
   const toolCtx: ToolContext | null =
     wallet.state === 'ready'
       ? {
-          address: wallet.address as Hex,
+          address: wallet.address,
           clientKey: netConfig.clientKey,
           chainPath: netConfig.chainPath,
           usdcContractAddress: netConfig.usdcContractAddress as Hex,
+          sendUsdc: wallet.sendUsdc,
+          swapUsdc: appKit.swapUsdc,
+          bridgeUsdc: appKit.bridgeUsdc,
         }
       : null
   const agent = useAgent(toolCtx)
@@ -86,7 +109,7 @@ function AppInner() {
         <header className="mb-5 flex items-center justify-between">
           <LogoFull height={36} />
           <button
-            onClick={wallet.logout}
+            onClick={handleSignOut}
             className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium transition-all hover:scale-105 active:scale-95"
             style={{
               background:'rgba(255,255,255,0.60)',
@@ -141,15 +164,19 @@ function AppInner() {
                 messages={agent.messages}
                 busy={agent.busy}
                 error={agent.error}
+                pendingProposals={agent.pendingProposals}
                 onSend={(t) => void agent.send(t)}
                 onStop={agent.stop}
                 onReset={agent.reset}
+                onConfirmProposal={agent.confirmProposal}
+                onCancelProposal={agent.cancelProposal}
               />
             )}
           </motion.div>
         </AnimatePresence>
 
         <InstallBanner className="mt-5" />
+        <SessionPersistenceWarning className="mt-2" />
       </div>
 
       {/* Bottom tab bar */}
@@ -186,6 +213,87 @@ function AppInner() {
           })}
         </div>
       </nav>
+
+      {/* Sign-out confirm modal — second gate (after the WebAuthn re-auth in
+          `wallet.logout`). The user has to tap through both to wipe the
+          remembered wallet. */}
+      <AnimatePresence>
+        {confirmingLogout && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-50 flex items-center justify-center px-6"
+            style={{ background: 'rgba(18,45,69,0.42)', backdropFilter: 'blur(6px)' }}
+            onClick={() => setConfirmingLogout(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.97 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="signout-title"
+              className="w-full max-w-sm rounded-3xl p-5"
+              style={{
+                background: 'rgba(255,255,255,0.92)',
+                backdropFilter: 'blur(40px) saturate(180%)',
+                WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+                border: '1px solid rgba(255,255,255,0.78)',
+                boxShadow: '0 20px 60px rgba(18,45,69,0.18)',
+              }}
+            >
+              <div className="mb-3 flex items-start justify-between">
+                <div
+                  className="flex h-9 w-9 items-center justify-center rounded-xl"
+                  style={{ background: 'rgba(255,205,131,0.22)' }}
+                >
+                  <AlertTriangle size={18} style={{ color: '#a06400' }} />
+                </div>
+                <button
+                  onClick={() => setConfirmingLogout(false)}
+                  aria-label="Close"
+                  className="rounded-lg p-1 transition-opacity hover:opacity-60"
+                  style={{ color: '#8a849c' }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <h2 id="signout-title" className="text-base font-bold" style={{ color: '#122d45' }}>
+                Sign out?
+              </h2>
+              <p className="mt-1.5 text-sm" style={{ color: '#4a5168' }}>
+                You'll need your passkey to sign back in. If the passkey is on
+                this device, you can clear it; if it's stored elsewhere, you
+                won't be able to recover this wallet.
+              </p>
+              <div className="mt-5 flex gap-2">
+                <button
+                  onClick={() => setConfirmingLogout(false)}
+                  className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all active:scale-95"
+                  style={{
+                    background: 'rgba(255,255,255,0.7)',
+                    border: '1px solid rgba(138,132,156,0.18)',
+                    color: '#4a5168',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void handleConfirmSignOut()}
+                  className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-all active:scale-95"
+                  style={{ background: '#c8331a' }}
+                >
+                  Sign out
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

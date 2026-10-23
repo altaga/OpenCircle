@@ -36,6 +36,7 @@ import {
   setRemember as setRememberPref,
   writeCredential,
 } from '@/lib/credential-store'
+import { reauthWithPasskey } from '@/lib/wallet-reauth'
 
 /** Parse a USDC display string (e.g. "12.50") to raw bigint (6 decimals). */
 function parseUsdc(amount: string): bigint {
@@ -79,7 +80,7 @@ export interface CircleWallet {
   txError:  string | null
   register: (username: string) => Promise<void>
   login:    () => Promise<void>
-  logout:   () => void
+  logout:   () => Promise<boolean>
   remember: boolean
   setRemember: (on: boolean) => void
   sendUsdc: (to: Hex, amountUsd: string) => Promise<string>
@@ -149,7 +150,10 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
   useEffect(() => {
     if (prevNetworkRef.current === netConfig.network) return
     prevNetworkRef.current = netConfig.network
-    forgetCredential(netConfig.network === 'mainnet' ? 'testnet' : 'mainnet')
+    // Fire-and-forget: the effect cannot await, and a failed localStorage
+    // wipe is not a state the wallet can meaningfully recover to. The state
+    // reset below is what actually signs the user out.
+    void forgetCredential(netConfig.network === 'mainnet' ? 'testnet' : 'mainnet')
     setCredential(null)
     setAddress(null)
     setState('idle')
@@ -256,8 +260,18 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
   }, [makePasskeyTransport, makePublicClient, netConfig.network, remember])
 
   // ── Logout ─────────────────────────────────────────────────────────────────
-  const logout = useCallback(() => {
-    void forgetCredential(netConfig.network)
+  // Re-authenticates with the same passkey that registered the wallet before
+  // wiping. A failure here is the explicit "user did not confirm" signal —
+  // the credential stays, the UI shows the error, the user is still signed
+  // in. Returns true if the wipe went through, false if it was blocked.
+  const logout = useCallback(async (): Promise<boolean> => {
+    if (!credential) return true
+    const ok = await reauthWithPasskey(credential)
+    if (!ok) {
+      setTxError('Could not verify your passkey. Sign out cancelled.')
+      return false
+    }
+    await forgetCredential(netConfig.network)
     setRememberState(false)
     setCredential(null)
     setAddress(null)
@@ -265,7 +279,8 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
     setTxState('idle')
     setTxHash(null)
     setTxError(null)
-  }, [netConfig.network])
+    return true
+  }, [credential, netConfig.network])
 
   // ── Send USDC ──────────────────────────────────────────────────────────────
   const sendUsdc = useCallback(async (to: Hex, amountUsd: string): Promise<string> => {
