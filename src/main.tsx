@@ -40,7 +40,7 @@ const StudioWatermark = () => (
     rel="noopener noreferrer"
     style={{
       position: 'fixed',
-      bottom: '16px',
+      bottom: '76px',
       right: '16px',
       display: 'flex',
       alignItems: 'center',

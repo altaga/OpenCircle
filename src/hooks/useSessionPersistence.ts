@@ -32,16 +32,14 @@ export interface SessionPersistenceState {
 
 export function useSessionPersistence(): SessionPersistenceState {
   const { installed } = usePwaInstall()
-  const [lastVisit, setLastVisitState] = useState<number | null>(null)
+  const [lastVisit] = useState<number | null>(() => getLastVisit())
 
   useEffect(() => {
     // Read first, then write — that way `lastVisit` reflects the *previous*
     // visit on the first render and the new one on subsequent renders. A
     // wipe of localStorage shows up as null and triggers the warning, which
     // is the right behavior (the channel is already gone).
-    const previous = getLastVisit()
     setLastVisit()
-    setLastVisitState(previous)
   }, [])
 
   const elapsed = daysSince(lastVisit)

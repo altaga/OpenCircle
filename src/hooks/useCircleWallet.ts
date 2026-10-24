@@ -2,8 +2,9 @@
  * useCircleWallet — Modular Wallet (passkey / ERC-4337 MSCA) hook
  *
  * Security:
- *  - Credentials are stored in sessionStorage only (cleared on tab close).
- *    Production apps should use httpOnly cookies to mitigate XSS theft.
+ *  - Credentials are stored in IndexedDB (primary) with a localStorage mirror,
+ *    so the wallet survives a browser restart. Only the credential's *public*
+ *    half is persisted — the signing key never leaves the authenticator.
  *  - No private key is ever generated or stored on the client.
  *  - All transactions are user-operations sponsored by Circle Gas Station.
  *  - Transports are created per-call — network config is read from context, not
@@ -20,7 +21,6 @@ import {
   toPasskeyTransport,
   toWebAuthnCredential,
   encodeTransfer,
-  type WebAuthnCredential,
 } from '@circle-fin/modular-wallets-core'
 import { type P256Credential } from 'viem/account-abstraction'
 import { createPublicClient, type Hex } from 'viem'
@@ -35,6 +35,7 @@ import {
   readRemember,
   setRemember as setRememberPref,
   writeCredential,
+  type StoredCredential,
 } from '@/lib/credential-store'
 import { reauthWithPasskey } from '@/lib/wallet-reauth'
 
@@ -64,7 +65,7 @@ export type TxState     = 'idle' | 'signing' | 'confirming' | 'success' | 'error
  * deliberate instead of a snap. It is *not* applied when no credential is
  * found — a first-time visitor goes straight to the sign-in card.
  */
-export const SPLASH_MIN_MS = 3000
+export const SPLASH_MIN_MS = 200
 
 function holdFor(startedAt: number, ms: number): Promise<void> {
   const remaining = ms - (Date.now() - startedAt)
@@ -105,18 +106,21 @@ function validateSafeAmount(amountUsd: string): string {
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
-// WebAuthnCredential is compatible with P256Credential (both have id + publicKey).
-function toP256(cred: WebAuthnCredential): P256Credential { return cred }
+// A credential is compatible with P256Credential for the two fields viem
+// actually reads: `id` and `publicKey`.
+function toP256(cred: { id: string; publicKey: string }): P256Credential {
+  return cred as unknown as P256Credential
+}
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
-  const [credential, setCredential] = useState<WebAuthnCredential | null>(null)
+  const [credential, setCredential] = useState<StoredCredential | null>(null)
   const [address, setAddress]       = useState<Hex | null>(null)
   const [state, setState]           = useState<WalletState>('restoring')
   const [txState, setTxState]       = useState<TxState>('idle')
   const [txHash, setTxHash]         = useState<string | null>(null)
   const [txError, setTxError]       = useState<string | null>(null)
-  const [remember, setRememberState] = useState(false)
+  const [remember, setRememberState] = useState(true)
   const sendingRef                  = useRef(false)
 
   const CLIENT_URL = CIRCLE_RPC_URL
@@ -182,6 +186,13 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
           setState('idle')
           return
         }
+        // Fast restore if we have cached address
+        if (cred.address) {
+          setCredential(cred)
+          setAddress(cred.address)
+          setState('ready')
+        }
+
         try {
           const account = await toCircleSmartAccount({
             client: makePublicClient(),
@@ -189,14 +200,27 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
           })
           await holdFor(startedAt, SPLASH_MIN_MS)
           if (cancelled) return
-          setCredential(cred)
+          const fullCred: StoredCredential = { ...cred, address: account.address }
+          setCredential(fullCred)
           setAddress(account.address)
           setState('ready')
-        } catch {
-          // Credential present but unusable (e.g. smart-account derivation
-          // failed) — fall back to the setup screen rather than trapping.
-          void forgetCredential(netConfig.network)
-          if (!cancelled) setState('idle')
+          if (cred.address !== account.address) {
+            void writeCredential(netConfig.network, fullCred, remembered, account.address)
+          }
+        } catch (err) {
+          console.warn('[useCircleWallet] smart account derivation notice on restore:', err)
+          if (cred.address) {
+            if (!cancelled) {
+              setCredential(cred)
+              setAddress(cred.address)
+              setState('ready')
+            }
+          } else {
+            if (!cancelled) {
+              setTxError(friendlyWalletError(err))
+              setState('error')
+            }
+          }
         }
       })()
     }, 0)
@@ -220,13 +244,14 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
         mode: WebAuthnMode.Register,
         username,
       })
-      await writeCredential(netConfig.network, cred, remember)
       const pubClient = makePublicClient()
       const account = await toCircleSmartAccount({
         client: pubClient,
         owner: toWebAuthnAccount({ credential: toP256(cred) }),
       })
-      setCredential(cred)
+      const fullCred: StoredCredential = { ...cred, address: account.address }
+      await writeCredential(netConfig.network, fullCred, remember, account.address)
+      setCredential(fullCred)
       setAddress(account.address)
       setState('ready')
     } catch (err) {
@@ -244,13 +269,14 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
         transport: makePasskeyTransport(),
         mode: WebAuthnMode.Login,
       })
-      await writeCredential(netConfig.network, cred, remember)
       const pubClient = makePublicClient()
       const account = await toCircleSmartAccount({
         client: pubClient,
         owner: toWebAuthnAccount({ credential: toP256(cred) }),
       })
-      setCredential(cred)
+      const fullCred: StoredCredential = { ...cred, address: account.address }
+      await writeCredential(netConfig.network, fullCred, remember, account.address)
+      setCredential(fullCred)
       setAddress(account.address)
       setState('ready')
     } catch (err) {

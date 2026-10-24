@@ -88,8 +88,16 @@ function clip(text: string): string {
  * Never returns a secret: `scrub` runs over both the raw text and the fallback
  * before anything leaves this function.
  */
-export function friendlyWalletError(err: unknown, ctx: { username?: string } = {}): string {
-  const raw = scrub(err instanceof Error ? err.message : String(err ?? ''))
+export function friendlyWalletError(err: unknown, _ctx: { username?: string } = {}): string {
+  const errMsg =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : err && typeof err === 'object' && 'message' in err && typeof (err as Record<string, unknown>).message === 'string'
+          ? ((err as Record<string, unknown>).message as string)
+          : ''
+  const raw = scrub(errMsg)
   const name = err instanceof Error ? err.name : ''
 
   const nameHint =

@@ -23,17 +23,13 @@
  * not replace the PWA install.
  *
  * What is stored is the same in both places: a WebAuthn public credential,
- * a network identifier, and the "remember me on this device" preference.
+ * a network identifier, the smart account address, and the "remember me on this device" preference.
  * Persisting them only removes the prompt needed to *open* the wallet —
  * every send still goes through `navigator.credentials.get()`.
- *
- * Tab-vs-device is decided by a marker in sessionStorage, which holds only
- * a boolean and dies with the tab. That keeps the "remember me" preference
- * and the credential itself in IndexedDB, where they survive a browser
- * restart.
  */
 
 import type { WebAuthnCredential } from '@circle-fin/modular-wallets-core'
+import type { Hex } from 'viem'
 
 const DB_NAME = 'opencircle'
 const DB_VERSION = 1
@@ -42,22 +38,55 @@ const STORE = 'wallets'
 /** Per-tab ownership marker. A boolean, never the credential. */
 const tabKey = (network: string) => `oc_tab_${network}`
 
+/**
+ * The part of a WebAuthn credential that can actually be persisted.
+ *
+ * `raw` is deliberately absent. It is the live `PublicKeyCredential` platform
+ * object, and the structured-clone algorithm refuses to clone it — IndexedDB
+ * rejects the entire record with a DataCloneError ("PublicKeyCredential object
+ * could not be cloned"). Nothing in the app reads it either: viem's
+ * `toWebAuthnAccount` only needs `id` and `publicKey`.
+ */
+export interface StoredCredential {
+  id: string
+  publicKey: string
+  rpId?: string
+  address?: Hex
+}
+
 interface WalletRecord {
   network: string
-  credential: WebAuthnCredential
+  credential: StoredCredential
   remember: boolean
+}
+
+/** Project a live credential down to the persistable half. */
+function toStorable(cred: WebAuthnCredential | StoredCredential, address?: Hex): StoredCredential {
+  return {
+    id: cred.id,
+    publicKey: cred.publicKey,
+    rpId: cred.rpId,
+    address: address ?? (cred as StoredCredential).address,
+  }
 }
 
 // ── Validation ───────────────────────────────────────────────────────────────
 
 /** CRIT-01: rejects anything that fails the expected shape (e.g. XSS-injected). */
-export function isValidCredentialShape(obj: unknown): obj is WebAuthnCredential {
+export function isValidCredentialShape(obj: unknown): obj is StoredCredential {
   if (typeof obj !== 'object' || obj === null) return false
   const c = obj as Record<string, unknown>
-  return (
+  const basic = (
     typeof c.id === 'string' && c.id.length > 0 &&
     typeof c.publicKey === 'string' && /^0x[0-9a-fA-F]+$/.test(c.publicKey)
   )
+  if (!basic) return false
+  if (c.address !== undefined) {
+    if (typeof c.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(c.address)) {
+      return false
+    }
+  }
+  return true
 }
 
 // ── IndexedDB plumbing ───────────────────────────────────────────────────────
@@ -125,21 +154,11 @@ function markTab(network: string): void {
   try { sessionStorage.setItem(tabKey(network), '1') } catch { /* private mode */ }
 }
 
-function ownsTab(network: string): boolean {
-  try { return sessionStorage.getItem(tabKey(network)) === '1' } catch { return false }
-}
-
 function releaseTab(network: string): void {
   try { sessionStorage.removeItem(tabKey(network)) } catch { /* private mode */ }
 }
 
 // ── Web mirror (localStorage fallback) ───────────────────────────────────────
-//
-// Sidecar copy of the WalletRecord, kept in sync on every write. Read by
-// `readCredential` and `readRemember` only when IndexedDB itself fails
-// (open error, blocked, private-mode quirk) — never on a successful "no
-// record" path. The stored blob is a WebAuthn *public* credential, so the
-// mirror is not a secret; the concern is availability, not confidentiality.
 
 /** Per-network key for the localStorage mirror. */
 const mirrorKey = (network: string) => `oc_wallet_mirror_${network}`
@@ -183,51 +202,45 @@ function clearWebMirror(network: string): void {
 /**
  * The credential this context may use, or null.
  *
- * A tab that created or logged in owns the credential for its lifetime. Any
- * other tab only sees it when the user opted into device persistence.
- *
- * If IndexedDB itself fails (blocked / unavailable), falls through to the
- * localStorage mirror; see the file header for why this is safe.
+ * If a valid credential exists on this device, it is restored immediately
+ * so the user stays signed into their wallet across refreshes.
  */
-export async function readCredential(network: string): Promise<WebAuthnCredential | null> {
+export async function readCredential(network: string): Promise<StoredCredential | null> {
+  let rec: WalletRecord | null = null
   try {
-    const rec = await get(network)
-    if (!rec) return null
-    if (rec.remember || ownsTab(network)) {
-      markTab(network)
-      return rec.credential
-    }
-    return null
+    rec = await get(network)
   } catch {
-    // IDB itself failed (open error, blocked, private-mode quirk). Try the
-    // mirror so the user does not silently land on the sign-in card.
-    const mirror = getWebMirror(network)
-    if (!mirror) return null
-    if (mirror.remember || ownsTab(network)) {
-      markTab(network)
-      return mirror.credential
-    }
-    return null
+    // IDB itself failed (open error, blocked, private-mode quirk).
+    rec = null
   }
+
+  if (!rec) {
+    rec = getWebMirror(network)
+  }
+
+  if (!rec) return null
+  markTab(network)
+  return rec.credential
 }
 
 /** Persist the credential and whether this device should remember it. */
 export async function writeCredential(
   network: string,
-  cred: WebAuthnCredential,
+  cred: WebAuthnCredential | StoredCredential,
   remember: boolean,
+  address?: Hex,
 ): Promise<void> {
   markTab(network)
   if (remember) await requestPersistentStorage()
-  const rec: WalletRecord = { network, credential: cred, remember }
+  const rec: WalletRecord = { network, credential: toStorable(cred, address), remember }
   try {
     await put(rec)
-  } catch {
-    // The wallet still works from memory; persistence is best-effort.
+  } catch (err) {
+    console.warn(
+      '[credential-store] IndexedDB write failed; falling back to the localStorage mirror.',
+      err,
+    )
   }
-  // Mirror in localStorage — independent of the IDB write so a blocked IDB
-  // does not leave the mirror stale, and a quota'd localStorage does not
-  // corrupt the IDB primary.
   setWebMirror(network, rec)
 }
 
@@ -237,9 +250,9 @@ export async function setRemember(network: string, on: boolean): Promise<void> {
   try {
     rec = await get(network)
   } catch {
-    // IDB unavailable; consult the mirror so the preference is not lost.
-    rec = getWebMirror(network)
+    rec = null
   }
+  if (!rec) rec = getWebMirror(network)
   if (!rec) return
   if (on) markTab(network)
   const updated: WalletRecord = { ...rec, remember: on }
@@ -247,18 +260,21 @@ export async function setRemember(network: string, on: boolean): Promise<void> {
     await put(updated)
     if (on) await requestPersistentStorage()
   } catch {
-    // IDB write failed; the mirror below keeps the new state alive.
+    // IDB write failed; mirror below keeps the state alive
   }
   setWebMirror(network, updated)
 }
 
 /** Currently persisted preference, so the toggle can hydrate its initial value. */
 export async function readRemember(network: string): Promise<boolean> {
+  let rec: WalletRecord | null = null
   try {
-    return (await get(network))?.remember === true
+    rec = await get(network)
   } catch {
-    return getWebMirror(network)?.remember === true
+    rec = null
   }
+  if (!rec) rec = getWebMirror(network)
+  return rec ? rec.remember !== false : true
 }
 
 /** Sign out: drop the credential, the preference, the tab marker, and the mirror. */

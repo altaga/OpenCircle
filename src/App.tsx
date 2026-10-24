@@ -8,7 +8,7 @@ import { Send, QrCode, ArrowDownUp, ArrowLeftRight, LogOut, Bot, X, AlertTriangl
 import { motion, AnimatePresence } from 'framer-motion'
 import { NetworkProvider, useNetwork } from '@/context/NetworkContext'
 import { LogoFull } from '@/components/Logo'
-import { useCircleWallet } from '@/hooks/useCircleWallet'
+import { useCircleWallet, shortAddress } from '@/hooks/useCircleWallet'
 import { useUsdcBalance } from '@/hooks/useUsdcBalance'
 import { WalletSetup } from '@/components/WalletSetup'
 import { BalanceCard } from '@/components/BalanceCard'
@@ -103,14 +103,14 @@ function AppInner() {
         <div style={{ position:'absolute', top:'45%', left:'55%', width:220, height:220, borderRadius:'50%', background:'radial-gradient(circle,rgba(175,143,244,0.16) 0%,transparent 70%)', filter:'blur(56px)' }} />
       </div>
 
-      <div className="relative z-10 mx-auto max-w-md px-4 pb-28 pt-6">
+      <div className={`relative z-10 mx-auto max-w-md px-4 pt-5 ${tab === 'agent' ? 'pb-20' : 'pb-28'}`}>
 
         {/* Header */}
-        <header className="mb-5 flex items-center justify-between">
-          <LogoFull height={36} />
+        <header className="mb-4 flex items-center justify-between">
+          <LogoFull height={34} />
           <button
             onClick={handleSignOut}
-            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium transition-all hover:scale-105 active:scale-95"
+            className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-all hover:scale-105 active:scale-95"
             style={{
               background:'rgba(255,255,255,0.60)',
               backdropFilter:'blur(12px)',
@@ -124,29 +124,65 @@ function AppInner() {
           </button>
         </header>
 
-        {/* Hero balance */}
-        <div className="mb-5">
-          <BalanceCard
-            address={wallet.address}
-            balance={balance.display}
-            loading={balance.loading}
-            onRefresh={() => void balance.refresh()}
-          />
-        </div>
+        {/* Balance representation: Full card for transacting panels, compact status ticker for AI agent */}
+        {tab !== 'agent' ? (
+          <div className="mb-5">
+            <BalanceCard
+              address={wallet.address}
+              balance={balance.display}
+              loading={balance.loading}
+              onRefresh={() => void balance.refresh()}
+            />
+          </div>
+        ) : (
+          <div
+            className="mb-2.5 flex items-center justify-between rounded-2xl px-3.5 py-2 shadow-2xs"
+            style={{
+              background: 'rgba(255,255,255,0.78)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+              border: '1px solid rgba(255,255,255,0.85)',
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20" />
+              <span className="text-xs font-bold text-[#122d45]">
+                {balance.display} USDC
+              </span>
+              <span className="text-[11px] text-[#8a849c]">· Arc Mainnet</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(wallet.address)
+                  toast.success('Address copied')
+                }}
+                className="font-mono text-[11px] font-medium text-[#8a849c] transition-colors hover:text-[#122d45]"
+                title="Copy full address"
+              >
+                {shortAddress(wallet.address)}
+              </button>
+              <button
+                onClick={() => void balance.refresh()}
+                disabled={balance.loading}
+                className="text-[11px] font-semibold text-[#1061a6] transition-opacity hover:opacity-80 active:scale-95"
+              >
+                {balance.loading ? 'Syncing…' : 'Sync'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Tab content */}
         <AnimatePresence mode="wait">
           <motion.div
             key={tab}
-            initial={{ opacity: 0, y: 12 }}
+            initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
           >
             {tab === 'send'    && (
-              // sendUsdc already records the failure in txError; swallowing the
-              // rejection here keeps a failed send out of the console as an
-              // unhandled rejection.
               <SendPanel
                 balance={balance.display}
                 rawBalance={balance.raw}
@@ -175,8 +211,12 @@ function AppInner() {
           </motion.div>
         </AnimatePresence>
 
-        <InstallBanner className="mt-5" />
-        <SessionPersistenceWarning className="mt-2" />
+        {tab !== 'agent' && (
+          <>
+            <InstallBanner className="mt-5" />
+            <SessionPersistenceWarning className="mt-2" />
+          </>
+        )}
       </div>
 
       {/* Bottom tab bar */}

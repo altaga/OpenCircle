@@ -41,11 +41,9 @@ export function usePwaInstall(): {
   install: () => Promise<void>
 } {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
-  const [installed, setInstalled] = useState(false)
+  const [installed, setInstalled] = useState(isStandalone)
 
   useEffect(() => {
-    setInstalled(isStandalone())
-
     const onPrompt = (e: Event) => {
       // Chromium shows its own mini-infobar unless the event is prevented.
       e.preventDefault()

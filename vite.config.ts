@@ -1,12 +1,52 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import { VitePWA } from 'vite-plugin-pwa'
 
+function agentDevPlugin(): Plugin {
+  return {
+    name: 'agent-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use('/api/agent', (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          res.end(JSON.stringify({ error: 'method_not_allowed' }))
+          return
+        }
+        let body = ''
+        req.on('data', (chunk) => { body += chunk })
+        req.on('end', async () => {
+          try {
+            const env = loadEnv('development', process.cwd(), '')
+            if (env.MINIMAX_APIKEY) process.env.MINIMAX_APIKEY = env.MINIMAX_APIKEY
+            const { handler } = await server.ssrLoadModule('/netlify/functions/agent.ts')
+            const result = await handler({
+              httpMethod: req.method ?? 'POST',
+              body,
+              headers: req.headers as Record<string, string | undefined>,
+            })
+            res.statusCode = result.statusCode
+            if (result.headers) {
+              for (const [k, v] of Object.entries(result.headers)) {
+                res.setHeader(k, v)
+              }
+            }
+            res.end(result.body)
+          } catch (err) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }))
+          }
+        })
+      })
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
     react(),
+    agentDevPlugin(),
     nodePolyfills(),
     VitePWA({
       registerType: 'autoUpdate',

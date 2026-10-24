@@ -78,8 +78,15 @@ function json(status: number, payload: unknown): NetlifyResult {
 function originAllowed(event: NetlifyEvent): boolean {
   const site = process.env.URL
   const origin = event.headers['origin']
-  if (!site) return false
-  if (!origin) return false // not a browser flow; fail closed
+  if (!origin) return false
+  if (!site) {
+    try {
+      const u = new URL(origin)
+      return u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+    } catch {
+      return false
+    }
+  }
   try {
     return new URL(origin).host === new URL(site).host
   } catch {

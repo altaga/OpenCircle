@@ -11,7 +11,6 @@
  * `PublicKeyCredential.id` requires a BufferSource, so it has to be decoded
  * back to bytes for `allowCredentials`.
  */
-import type { WebAuthnCredential } from '@circle-fin/modular-wallets-core'
 
 /** Decode a base64url string (no padding) to a Uint8Array. */
 function base64UrlToBytes(s: string): Uint8Array {
@@ -34,7 +33,7 @@ function base64UrlToBytes(s: string): Uint8Array {
  * The server does not see this challenge, so the re-auth proves possession
  * of the authenticator, not identity with any relying-party session.
  */
-export async function reauthWithPasskey(cred: WebAuthnCredential): Promise<boolean> {
+export async function reauthWithPasskey(cred: { id: string }): Promise<boolean> {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
   if (!window.PublicKeyCredential || !navigator.credentials?.get) return false
   if (!cred?.id) return false

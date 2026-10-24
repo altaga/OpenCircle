@@ -71,6 +71,12 @@ function explain(status: number, code: string): string {
   }
 }
 
+function safeStr(val: unknown, fallback = ''): string {
+  if (typeof val === 'string') return val
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val)
+  return fallback
+}
+
 export async function askAgent(
   messages: AgentChatMessage[],
   signal?: AbortSignal,
@@ -96,14 +102,14 @@ export async function askAgent(
   }
 
   if (!response.ok) {
-    throw new Error(explain(response.status, String(payload.error ?? 'unknown')))
+    throw new Error(explain(response.status, safeStr(payload.error, 'unknown')))
   }
 
   return {
-    model: String(payload.model ?? ''),
-    stopReason: String(payload.stopReason ?? 'end_turn'),
-    text: String(payload.text ?? ''),
-    thinking: payload.thinking ? String(payload.thinking) : null,
+    model: safeStr(payload.model, ''),
+    stopReason: safeStr(payload.stopReason, 'end_turn'),
+    text: safeStr(payload.text, ''),
+    thinking: payload.thinking ? safeStr(payload.thinking) : null,
     toolCalls: Array.isArray(payload.toolCalls)
       ? (payload.toolCalls as AgentToolCall[])
       : [],
