@@ -23,7 +23,7 @@ import {
   encodeTransfer,
 } from '@circle-fin/modular-wallets-core'
 import { type P256Credential } from 'viem/account-abstraction'
-import { createPublicClient, type Hex } from 'viem'
+import { createPublicClient, type Hex, http } from 'viem'
 import { createBundlerClient, toWebAuthnAccount } from 'viem/account-abstraction'
 import { arc } from 'viem/chains'
 import type { NetworkConfig } from '@/context/NetworkContext'
@@ -112,6 +112,19 @@ function toP256(cred: { id: string; publicKey: string }): P256Credential {
   return cred as unknown as P256Credential
 }
 
+async function deriveOfflineSmartAccount(
+  viemChain: typeof arc,
+  cred: StoredCredential,
+  address?: Hex,
+) {
+  const offlineClient = createPublicClient({ chain: viemChain, transport: http() })
+  return toCircleSmartAccount({
+    client: offlineClient,
+    owner: toWebAuthnAccount({ credential: toP256(cred) }),
+    ...(address ? { address } : {}),
+  })
+}
+
 // ── Hook ─────────────────────────────────────────────────────────────────────
 export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
   const [credential, setCredential] = useState<StoredCredential | null>(null)
@@ -186,17 +199,37 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
           setState('idle')
           return
         }
-        // Fast restore if we have cached address
-        if (cred.address) {
-          setCredential(cred)
-          setAddress(cred.address)
-          setState('ready')
+
+        // 1. Resolve address: from cached credential or via deterministic offline CREATE2 derivation
+        let resolvedAddress: Hex | null = cred.address ?? null
+        if (!resolvedAddress) {
+          try {
+            const offlineAccount = await deriveOfflineSmartAccount(viemChain, cred)
+            resolvedAddress = offlineAccount.address
+          } catch (derivErr) {
+            console.warn('[useCircleWallet] offline address derivation notice:', derivErr)
+          }
         }
 
+        // 2. If address is resolved, immediately promote wallet to ready state
+        if (resolvedAddress) {
+          const fullCred: StoredCredential = { ...cred, address: resolvedAddress }
+          if (!cancelled) {
+            setCredential(fullCred)
+            setAddress(resolvedAddress)
+            setState('ready')
+          }
+          if (cred.address !== resolvedAddress) {
+            void writeCredential(netConfig.network, fullCred, remembered, resolvedAddress)
+          }
+        }
+
+        // 3. Optional: sync with Circle modular transport if client key and RPC are available
         try {
           const account = await toCircleSmartAccount({
             client: makePublicClient(),
             owner: toWebAuthnAccount({ credential: toP256(cred) }),
+            ...(resolvedAddress ? { address: resolvedAddress } : {}),
           })
           await holdFor(startedAt, SPLASH_MIN_MS)
           if (cancelled) return
@@ -208,18 +241,11 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
             void writeCredential(netConfig.network, fullCred, remembered, account.address)
           }
         } catch (err) {
-          console.warn('[useCircleWallet] smart account derivation notice on restore:', err)
-          if (cred.address) {
-            if (!cancelled) {
-              setCredential(cred)
-              setAddress(cred.address)
-              setState('ready')
-            }
-          } else {
-            if (!cancelled) {
-              setTxError(friendlyWalletError(err))
-              setState('error')
-            }
+          console.warn('[useCircleWallet] online modular transport notice on restore:', err)
+          // If we couldn't resolve the address either offline or online, only then show error
+          if (!resolvedAddress && !cancelled) {
+            setTxError(friendlyWalletError(err))
+            setState('error')
           }
         }
       })()
@@ -244,21 +270,29 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
         mode: WebAuthnMode.Register,
         username,
       })
-      const pubClient = makePublicClient()
-      const account = await toCircleSmartAccount({
-        client: pubClient,
-        owner: toWebAuthnAccount({ credential: toP256(cred) }),
-      })
-      const fullCred: StoredCredential = { ...cred, address: account.address }
-      await writeCredential(netConfig.network, fullCred, remember, account.address)
+      let accountAddress: Hex | null = null
+      try {
+        const pubClient = makePublicClient()
+        const account = await toCircleSmartAccount({
+          client: pubClient,
+          owner: toWebAuthnAccount({ credential: toP256(cred) }),
+        })
+        accountAddress = account.address
+      } catch (err) {
+        console.warn('[register] modular transport derivation notice, falling back to offline derivation:', err)
+        const offlineAccount = await deriveOfflineSmartAccount(viemChain, cred)
+        accountAddress = offlineAccount.address
+      }
+      const fullCred: StoredCredential = { ...cred, address: accountAddress }
+      await writeCredential(netConfig.network, fullCred, remember, accountAddress)
       setCredential(fullCred)
-      setAddress(account.address)
+      setAddress(accountAddress)
       setState('ready')
     } catch (err) {
       setState('error')
       setTxError(friendlyWalletError(err, { username }))
     }
-  }, [makePasskeyTransport, makePublicClient, netConfig.network, remember])
+  }, [makePasskeyTransport, makePublicClient, netConfig.network, remember, viemChain])
 
   // ── Login ──────────────────────────────────────────────────────────────────
   const login = useCallback(async () => {
@@ -269,21 +303,29 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
         transport: makePasskeyTransport(),
         mode: WebAuthnMode.Login,
       })
-      const pubClient = makePublicClient()
-      const account = await toCircleSmartAccount({
-        client: pubClient,
-        owner: toWebAuthnAccount({ credential: toP256(cred) }),
-      })
-      const fullCred: StoredCredential = { ...cred, address: account.address }
-      await writeCredential(netConfig.network, fullCred, remember, account.address)
+      let accountAddress: Hex | null = null
+      try {
+        const pubClient = makePublicClient()
+        const account = await toCircleSmartAccount({
+          client: pubClient,
+          owner: toWebAuthnAccount({ credential: toP256(cred) }),
+        })
+        accountAddress = account.address
+      } catch (err) {
+        console.warn('[login] modular transport derivation notice, falling back to offline derivation:', err)
+        const offlineAccount = await deriveOfflineSmartAccount(viemChain, cred)
+        accountAddress = offlineAccount.address
+      }
+      const fullCred: StoredCredential = { ...cred, address: accountAddress }
+      await writeCredential(netConfig.network, fullCred, remember, accountAddress)
       setCredential(fullCred)
-      setAddress(account.address)
+      setAddress(accountAddress)
       setState('ready')
     } catch (err) {
       setState('error')
       setTxError(friendlyWalletError(err))
     }
-  }, [makePasskeyTransport, makePublicClient, netConfig.network, remember])
+  }, [makePasskeyTransport, makePublicClient, netConfig.network, remember, viemChain])
 
   // ── Logout ─────────────────────────────────────────────────────────────────
   // Re-authenticates with the same passkey that registered the wallet before
@@ -329,10 +371,16 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       const usdcAddress = netConfig.usdcContractAddress as Hex
       if (!usdcAddress || usdcAddress === '0x') throw new Error('No USDC contract known for this chain')
 
-      const account  = await toCircleSmartAccount({
-        client: pubClient,
-        owner: toWebAuthnAccount({ credential: toP256(credential) }),
-      })
+      let account
+      try {
+        account = await toCircleSmartAccount({
+          client: pubClient,
+          owner: toWebAuthnAccount({ credential: toP256(credential) }),
+          address,
+        })
+      } catch {
+        account = await deriveOfflineSmartAccount(viemChain, credential, address)
+      }
       const amount   = parseUsdc(safeAmount)
       const callData = encodeTransfer(to, usdcAddress, amount)
 
@@ -356,7 +404,7 @@ export function useCircleWallet(netConfig: NetworkConfig): CircleWallet {
       sendingRef.current = false
       throw new Error(msg)
     }
-  }, [credential, address, makePublicClient, makeBundlerClient, netConfig])
+  }, [credential, address, makePublicClient, makeBundlerClient, netConfig, viemChain])
 
   return {
     address: address ?? ('0x'),

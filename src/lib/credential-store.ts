@@ -62,9 +62,10 @@ interface WalletRecord {
 
 /** Project a live credential down to the persistable half. */
 function toStorable(cred: WebAuthnCredential | StoredCredential, address?: Hex): StoredCredential {
+  const pk = cred.publicKey.startsWith('0x') ? cred.publicKey : `0x${cred.publicKey}`
   return {
     id: cred.id,
-    publicKey: cred.publicKey,
+    publicKey: pk,
     rpId: cred.rpId,
     address: address ?? (cred as StoredCredential).address,
   }
@@ -78,10 +79,11 @@ export function isValidCredentialShape(obj: unknown): obj is StoredCredential {
   const c = obj as Record<string, unknown>
   const basic = (
     typeof c.id === 'string' && c.id.length > 0 &&
-    typeof c.publicKey === 'string' && /^0x[0-9a-fA-F]+$/.test(c.publicKey)
+    typeof c.publicKey === 'string' &&
+    (/^0x[0-9a-fA-F]+$/.test(c.publicKey) || /^[0-9a-fA-F]+$/.test(c.publicKey))
   )
   if (!basic) return false
-  if (c.address !== undefined) {
+  if (c.address !== undefined && c.address !== null) {
     if (typeof c.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(c.address)) {
       return false
     }
@@ -197,6 +199,60 @@ function clearWebMirror(network: string): void {
   }
 }
 
+// ── Cookie mirror (fallback for partitioned / iframe storage) ────────────────
+
+const cookieKey = (network: string) => `oc_wallet_${network}`
+
+function getCookieMirror(network: string): WalletRecord | null {
+  if (typeof document === 'undefined') return null
+  try {
+    const name = `${cookieKey(network)}=`
+    const decoded = decodeURIComponent(document.cookie)
+    const parts = decoded.split(';')
+    for (const part of parts) {
+      const trimmed = part.trim()
+      if (trimmed.startsWith(name)) {
+        const val = trimmed.slice(name.length)
+        const parsed: unknown = JSON.parse(val)
+        if (typeof parsed !== 'object' || parsed === null) return null
+        const r = parsed as Partial<WalletRecord>
+        if (!isValidCredentialShape(r.credential)) return null
+        return { network, credential: r.credential, remember: r.remember === true }
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function setCookieMirror(network: string, rec: WalletRecord): void {
+  if (typeof document === 'undefined') return
+  try {
+    const val = encodeURIComponent(JSON.stringify(rec))
+    const isHttps = typeof location !== 'undefined' && location.protocol === 'https:'
+    const secureFlag = isHttps ? '; Secure' : ''
+    const isIframe = typeof window !== 'undefined' && window.self !== window.top
+    const samesite = isIframe ? 'None' : 'Lax'
+    document.cookie = `${cookieKey(network)}=${val}; max-age=31536000; path=/; SameSite=${samesite}${secureFlag}`
+  } catch {
+    // cookies disabled or quota reached
+  }
+}
+
+function clearCookieMirror(network: string): void {
+  if (typeof document === 'undefined') return
+  try {
+    const isHttps = typeof location !== 'undefined' && location.protocol === 'https:'
+    const secureFlag = isHttps ? '; Secure' : ''
+    const isIframe = typeof window !== 'undefined' && window.self !== window.top
+    const samesite = isIframe ? 'None' : 'Lax'
+    document.cookie = `${cookieKey(network)}=; max-age=0; path=/; SameSite=${samesite}${secureFlag}`
+  } catch {
+    // ignore
+  }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -216,6 +272,10 @@ export async function readCredential(network: string): Promise<StoredCredential 
 
   if (!rec) {
     rec = getWebMirror(network)
+  }
+
+  if (!rec) {
+    rec = getCookieMirror(network)
   }
 
   if (!rec) return null
@@ -242,6 +302,7 @@ export async function writeCredential(
     )
   }
   setWebMirror(network, rec)
+  setCookieMirror(network, rec)
 }
 
 /** Turn device persistence on/off without forcing a re-auth. */
@@ -253,6 +314,7 @@ export async function setRemember(network: string, on: boolean): Promise<void> {
     rec = null
   }
   if (!rec) rec = getWebMirror(network)
+  if (!rec) rec = getCookieMirror(network)
   if (!rec) return
   if (on) markTab(network)
   const updated: WalletRecord = { ...rec, remember: on }
@@ -263,6 +325,7 @@ export async function setRemember(network: string, on: boolean): Promise<void> {
     // IDB write failed; mirror below keeps the state alive
   }
   setWebMirror(network, updated)
+  setCookieMirror(network, updated)
 }
 
 /** Currently persisted preference, so the toggle can hydrate its initial value. */
@@ -274,13 +337,15 @@ export async function readRemember(network: string): Promise<boolean> {
     rec = null
   }
   if (!rec) rec = getWebMirror(network)
+  if (!rec) rec = getCookieMirror(network)
   return rec ? rec.remember !== false : true
 }
 
-/** Sign out: drop the credential, the preference, the tab marker, and the mirror. */
+/** Sign out: drop the credential, the preference, the tab marker, the mirror, and the cookie. */
 export async function forgetCredential(network: string): Promise<void> {
   releaseTab(network)
   clearWebMirror(network)
+  clearCookieMirror(network)
   try {
     await remove(network)
   } catch {
